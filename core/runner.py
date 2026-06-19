@@ -740,7 +740,7 @@ class ErrorParser:
         """
         Strip terminal prompt noise from pasted text.
         Removes lines like:
-            abhinav@laptop:~/proj$ python main.py
+            user@laptop:~/proj$ python main.py
             >>> import foo
             PS C:\> python main.py
             (venv) user@host:~$ 
