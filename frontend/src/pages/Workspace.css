@@ -1,0 +1,288 @@
+/* ═══════════════════════════════════════════════════
+   Workspace Page — Monochrome
+   ═══════════════════════════════════════════════════ */
+
+.workspace {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Header ──────────────────────────────────────── */
+.workspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md) var(--space-xl);
+  border-bottom: 1px solid var(--border-subtle);
+  background: rgba(0, 0, 0, 0.9);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.project-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.project-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.project-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.project-status.default { background: rgba(255, 255, 255, 0.04); color: var(--text-muted); }
+.project-status.success { background: var(--success-bg); color: var(--success); }
+.project-status.active { background: rgba(255, 255, 255, 0.06); color: var(--text-secondary); }
+.project-status.error { background: var(--error-bg); color: var(--error); }
+
+.status-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.project-status.active .status-indicator {
+  animation: pulse-glow 1.5s infinite;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.ws-indicator {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  transition: color var(--transition-fast);
+}
+.ws-indicator.connected {
+  color: var(--success);
+}
+
+/* ── Prompt Section ──────────────────────────────── */
+.prompt-section {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-2xl);
+}
+
+.prompt-card {
+  max-width: 720px;
+  width: 100%;
+  padding: var(--space-xl);
+}
+.prompt-card h2 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin-bottom: var(--space-sm);
+  color: #ffffff;
+}
+.prompt-hint {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  margin-bottom: var(--space-lg);
+}
+
+.prompt-textarea {
+  min-height: 160px;
+  font-size: 0.95rem;
+}
+
+.prompt-actions {
+  margin-top: var(--space-lg);
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── Action Bar ──────────────────────────────────── */
+.action-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-xl);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+
+.status-detail {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  flex: 1;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Panel Tabs ──────────────────────────────────── */
+.workspace-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.panel-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 var(--space-xl);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 20px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  position: relative;
+}
+.tab:hover {
+  color: var(--text-primary);
+}
+.tab.active {
+  color: #ffffff;
+  border-bottom-color: #ffffff;
+}
+
+.tab-pulse {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #ffffff;
+  animation: pulse-glow 1.5s infinite;
+}
+.tab-pulse.green {
+  background: var(--success);
+}
+
+/* ── Panel Content ───────────────────────────────── */
+.panel-content {
+  flex: 1;
+  overflow: hidden;
+  padding: var(--space-lg) var(--space-xl);
+  min-height: 400px;
+}
+/* Manual Followup Section */
+.followup-section {
+  padding: var(--space-xl);
+  display: flex;
+  justify-content: center;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border-color);
+  animation: slideUp 0.4s ease-out;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.followup-card {
+  width: 100%;
+  max-width: 800px;
+  padding: var(--space-xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--bg-panel);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.followup-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 15px 40px rgba(0, 0, 0, 0.3);
+}
+
+.followup-card h3 {
+  color: var(--text-primary);
+  font-size: 1.35rem;
+  margin: 0;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.followup-hint {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  margin: 0 0 var(--space-sm) 0;
+}
+
+.followup-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.followup-textarea {
+  min-height: 100px;
+  resize: vertical;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  transition: all 0.2s ease;
+}
+
+.followup-textarea:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(var(--primary-rgb), 0.2);
+  background: var(--bg-secondary);
+}
+
+.followup-input-group .btn {
+  align-self: flex-end;
+  padding: 0.6rem 1.5rem;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(var(--primary-rgb), 0.3);
+  transition: all 0.2s ease;
+}
+
+.followup-input-group .btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(var(--primary-rgb), 0.4);
+}
+
+.followup-input-group .btn:active:not(:disabled) {
+  transform: translateY(1px);
+}

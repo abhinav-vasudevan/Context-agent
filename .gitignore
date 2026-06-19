@@ -1,0 +1,38 @@
+# ── Python ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# ── Environments ──────────────────────────────────────────────────────
+.env
+.venv/
+venv/
+env/
+ENV/
+
+# ── Node / Frontend ──────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+
+# ── IDE ───────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── OS ────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# ── Project Runtime ──────────────────────────────────────────────────
+# User projects are created at runtime — don't track them
+projects/*/
+!projects/.gitkeep
