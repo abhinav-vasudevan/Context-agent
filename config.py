@@ -54,6 +54,11 @@ MAX_PLAN_RETRIES = 2             # Max retries for plan generation
 SYNTAX_CHECK_TIMEOUT = 10       # Seconds for syntax check subprocess
 PROCESS_RUN_TIMEOUT = 300        # Seconds for running user projects (5 min)
 
+# ── QA Agent Settings ─────────────────────────────────────────────────
+MAX_QA_ATTEMPTS = 3              # Max autonomous test-fix cycles
+MAX_QA_INTERACTIONS = 10         # Max input prompts the QA Agent will answer per run
+QA_PROCESS_TIMEOUT = 60          # Seconds before killing a QA test run
+
 # ── Backend Server Settings ───────────────────────────────────────────
 BACKEND_HOST = "127.0.0.1"
 BACKEND_PORT = 8088

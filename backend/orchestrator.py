@@ -9,11 +9,10 @@ the terminal UI and the FastAPI web backend.
 from __future__ import annotations
 import asyncio
 import logging
-import os
 import re
 import uuid
 from pathlib import Path
-from typing import Optional, Callable, Awaitable
+from typing import Optional
 
 import config
 from core.llm_client import LLMClient
@@ -219,7 +218,14 @@ class Orchestrator:
     # ── Execution ─────────────────────────────────────────────────────
 
     async def execute_all(self) -> dict:
-        """Execute all plan steps sequentially."""
+        """
+        Execute all plan steps with the NHIL (No Human In The Loop) flow:
+        1. Write ALL files (no execution during generation)
+        2. Ask permission for pip install requirements.txt
+        3. Run syntax check on EACH .py file and fix errors
+        4. Run QA Agent to test main.py with LLM-driven inputs
+        5. Fix any errors found during QA testing
+        """
         if not self.state or not self.state.plan_approved:
             return {"success": False, "error": "Plan not approved"}
 
@@ -231,13 +237,15 @@ class Orchestrator:
         self.state.status = "executing"
 
         try:
+            # ── Phase 1: Write ALL files ──────────────────────────────
+            await self.ws.send_status("executing", "Phase 1: Generating all files...")
             for i, step in enumerate(self.state.plan_steps):
                 if self._cancel_requested:
                     await self.ws.send_status("cancelled", "Execution cancelled by user")
                     break
 
                 if step.status == StepStatus.COMPLETED:
-                    continue  # Skip already completed steps (resume support)
+                    continue
 
                 self.state.current_step = i
                 result = await self._execute_step(step)
@@ -245,20 +253,77 @@ class Orchestrator:
                 if not result["success"] and not result.get("continued", False):
                     break
 
-            # Mark completion
-            all_done = all(s.status == StepStatus.COMPLETED for s in self.state.plan_steps)
-            if all_done:
-                self.state.status = "completed"
-                await self.ws.send_status("completed", "All steps completed successfully!")
-            else:
+            all_written = all(s.status == StepStatus.COMPLETED for s in self.state.plan_steps)
+            if not all_written:
                 self.state.status = "paused"
-                await self.ws.send_status("paused", "Execution paused due to error.")
+                await self.ws.send_status("paused", "File generation paused due to error.")
+                self.state.save(self.workspace_dir / "project_state.json")
+                return {"success": False, "project": self.state.to_api_dict()}
 
+            # ── Phase 2: Install requirements.txt (with permission) ──
+            req_path = self.workspace_dir / "requirements.txt"
+            if req_path.exists():
+                req_id = str(uuid.uuid4())
+                await self.ws.send_permission_request(
+                    req_id, "Install dependencies from requirements.txt?", default=True
+                )
+                self._permission_event = asyncio.Event()
+                try:
+                    await asyncio.wait_for(self._permission_event.wait(), timeout=300)
+                except asyncio.TimeoutError:
+                    self._permission_response = True
+
+                if self._permission_response:
+                    await self.ws.send_status("installing", "Phase 2: Installing dependencies...")
+                    install_res = await self.runner.install_requirements(
+                        on_stdout=lambda text: asyncio.ensure_future(self.ws.send_process_stdout(text)),
+                        on_stderr=lambda text: asyncio.ensure_future(self.ws.send_process_stderr(text)),
+                    )
+                    if install_res.success:
+                        await self.ws.send_status("installed", "Dependencies installed successfully!")
+                    else:
+                        await self.ws.send_error(
+                            install_res.error or install_res.stderr, "requirements.txt"
+                        )
+
+            # ── Phase 3: Syntax check ALL .py files and fix errors ───
+            await self.ws.send_status("verifying", "Phase 3: Running syntax checks on all files...")
+            py_files = [s.file_path for s in self.state.plan_steps if s.file_path.endswith(".py")]
+
+            for py_file in py_files:
+                if self._cancel_requested:
+                    break
+
+                full_path = self.workspace_dir / py_file
+                if not full_path.exists():
+                    continue
+
+                syntax_result = await self.runner.syntax_check(py_file)
+                if syntax_result.success:
+                    await self.ws.send_status("verified", f"✓ {py_file} — syntax OK")
+                else:
+                    await self.ws.send_error(syntax_result.error, py_file)
+                    await self.ws.send_status("fixing", f"Fixing syntax error in {py_file}...")
+                    fixed = await self._auto_fix(py_file, syntax_result.error, verify_execution=False)
+                    if fixed:
+                        await self.ws.send_status("fixed", f"✓ {py_file} — syntax fixed")
+                    else:
+                        await self.ws.send_error(f"Could not fix syntax in {py_file}", py_file)
+
+            # ── Phase 4: QA Agent tests main.py ──────────────────────
+            main_path = self.workspace_dir / "main.py"
+            if main_path.exists():
+                await self.ws.send_status("testing", "Phase 4: QA Agent testing main.py...")
+                await self._run_qa_test_loop()
+
+            # ── Done ─────────────────────────────────────────────────
+            self.state.status = "completed"
             self.state.save(self.workspace_dir / "project_state.json")
+            await self.ws.send_status("completed", "All phases completed successfully!")
 
             usage = self.llm.get_usage()
             return {
-                "success": all_done,
+                "success": True,
                 "project": self.state.to_api_dict(),
                 "usage": usage,
             }
@@ -278,8 +343,7 @@ class Orchestrator:
         self.state.status = "executing"
         try:
             result = await self._execute_step(step)
-            
-            # Check if this was the last step
+
             all_done = all(s.status == StepStatus.COMPLETED for s in self.state.plan_steps)
             if all_done:
                 self.state.status = "completed"
@@ -287,44 +351,20 @@ class Orchestrator:
             else:
                 self.state.status = "paused"
                 await self.ws.send_status("paused", f"Step {step_number} finished. Paused.")
-                
+
             return result
         finally:
             self._executing = False
             self.state.save(self.workspace_dir / "project_state.json")
 
     async def _execute_step(self, step: PlanStep) -> dict:
-        """Execute a single plan step (internal)."""
+        """
+        Execute a single plan step: generate the file and save it.
+        No execution, no pip installs, no permission prompts.
+        """
         await self.ws.send_step_update(step.step_number, "in_progress", f"Working on {step.title}...")
         step.status = StepStatus.IN_PROGRESS
         self.state.save(self.workspace_dir / "project_state.json")
-
-        # ── Pre-generation Checks (README Verification) ──
-        if step.file_path == "README.md":
-            main_path = self.workspace_dir / "main.py"
-            if main_path.exists():
-                await self.ws.send_status("running", "Verifying main.py before writing README...")
-                run_result = await self.runner.run_python_file(
-                    "main.py",
-                    on_stdout=lambda text: asyncio.ensure_future(self.ws.send_process_stdout(text)),
-                    on_stderr=lambda text: asyncio.ensure_future(self.ws.send_process_stderr(text)),
-                )
-                await self.ws.send_process_done(run_result.success, run_result.exit_code, run_result.error)
-                
-                if not run_result.success:
-                    error_text = run_result.error or run_result.stderr
-                    await self.ws.send_status("fixing", "Auto-fixing main.py verification error...")
-                    fixed = await self._auto_fix("main.py", error_text)
-                    if not fixed:
-                        # Auto-fix failed, inject error into README description for the LLM
-                        step.description += (
-                            f"\n\nCRITICAL: The system failed to run main.py with this error: \n"
-                            f"```\n{error_text}\n```\n"
-                            f"Please document this error clearly under 'Manual Setup Required' and explain "
-                            f"how the user can fix it manually (e.g. missing pip installs, env vars)."
-                        )
-                    else:
-                        step.description += "\n\nNote: The system successfully verified main.py automatically."
 
         # ── Code Generation ──
         await self.ws.send_status("generating", f"Writing {step.file_path}...")
@@ -345,8 +385,8 @@ class Orchestrator:
             await self.ws.send_error(error, step.file_path)
 
             if "Syntax Error" in error or "placeholder" in error.lower():
-                await self.ws.send_status("fixing", f"Auto-fixing error in {step.file_path}...")
-                fixed = await self._auto_fix(step.file_path, error)
+                await self.ws.send_status("fixing", f"Auto-fixing generation error in {step.file_path}...")
+                fixed = await self._auto_fix(step.file_path, error, verify_execution=False)
                 if not fixed:
                     return {"success": False, "error": error}
             else:
@@ -358,32 +398,7 @@ class Orchestrator:
             content = file_path.read_text(encoding="utf-8")
             await self.ws.send_file_update(step.file_path, content)
 
-        # ── Requirements Auto-Install ──
-        if step.file_path == "requirements.txt":
-            req_id = str(uuid.uuid4())
-            await self.ws.send_permission_request(
-                req_id, "Install generated requirements? (pip install -r requirements.txt)", default=True
-            )
-            self._permission_event = asyncio.Event()
-            try:
-                await asyncio.wait_for(self._permission_event.wait(), timeout=300)
-            except asyncio.TimeoutError:
-                self._permission_response = False
-            
-            if self._permission_response:
-                await self.ws.send_status("installing", "Installing dependencies from requirements.txt...")
-                install_res = await self.runner.install_requirements(
-                    on_stdout=lambda text: asyncio.ensure_future(self.ws.send_process_stdout(text)),
-                    on_stderr=lambda text: asyncio.ensure_future(self.ws.send_process_stderr(text))
-                )
-                if install_res.success:
-                    await self.ws.send_status("running", "Dependencies installed successfully!")
-                else:
-                    error_text = install_res.error or install_res.stderr
-                    await self.ws.send_error(error_text, "requirements.txt")
-                    step.description += f"\n\nCRITICAL ERROR: Failed to pip install requirements. Mention this manual fix in README: {error_text}"
-
-        # ── Main.py Integration ──
+        # ── Main.py Integration (for src/ files) ──
         if step.file_path.startswith("src/") and step.file_path.endswith(".py"):
             await self.ws.send_status("integrating", f"Updating main.py to import {step.file_path}...")
             new_entry = next((e for e in self.state.file_registry if e.path == step.file_path), None)
@@ -402,93 +417,6 @@ class Orchestrator:
                     if main_path.exists():
                         await self.ws.send_file_update("main.py", main_path.read_text(encoding="utf-8"))
 
-        # ── Execution / Verification ──
-        if step.file_path.endswith(".py"):
-            target_to_run = step.file_path
-
-            # Auto-execute to verify syntax and imports without blocking the user
-            self._permission_response = True
-
-            if self._permission_response:
-                await self.ws.send_status("running", f"Executing {target_to_run}...")
-
-                run_result = await self.runner.run_python_file(
-                    target_to_run,
-                    on_stdout=lambda text: asyncio.ensure_future(self.ws.send_process_stdout(text)),
-                    on_stderr=lambda text: asyncio.ensure_future(self.ws.send_process_stderr(text)),
-                )
-
-                await self.ws.send_process_done(run_result.success, run_result.exit_code, run_result.error)
-
-                if not run_result.success:
-                    await self.ws.send_error(run_result.error or run_result.stderr, target_to_run)
-
-                    parsed_err = ErrorParser.parse_traceback(run_result.error or run_result.stderr)
-                    if parsed_err.get("is_import_error") and parsed_err.get("missing_module"):
-                        missing_mod = parsed_err["missing_module"]
-                        
-                        # Check if it's a local module
-                        is_local = False
-                        if (self.workspace_dir / f"{missing_mod}.py").exists() or \
-                           (self.workspace_dir / "src" / f"{missing_mod}.py").exists() or \
-                           (self.workspace_dir / missing_mod).is_dir() or \
-                           (self.workspace_dir / "src" / missing_mod).is_dir():
-                            is_local = True
-
-                        if is_local:
-                            await self.ws.send_status("fixing", f"Detected missing local module '{missing_mod}'. Skipping pip install.")
-                            run_result.error = (run_result.error or run_result.stderr) + f"\n\nHint: '{missing_mod}' is a local file in this project. Check if your import statement needs the 'src.' prefix (e.g. 'from src.{missing_mod} import ...')."
-                        else:
-                            req_id = str(uuid.uuid4())
-                            await self.ws.send_permission_request(
-                                req_id, f"Module '{missing_mod}' is missing. Run pip install {missing_mod}?", default=True
-                            )
-                            self._permission_event = asyncio.Event()
-                            try:
-                                await asyncio.wait_for(self._permission_event.wait(), timeout=300)
-                            except asyncio.TimeoutError:
-                                self._permission_response = True
-                                
-                            if self._permission_response:
-                                await self.ws.send_status("installing", f"Installing {missing_mod}...")
-                                install_res = await self.runner.install_package(
-                                    missing_mod,
-                                    on_stdout=lambda text: asyncio.ensure_future(self.ws.send_process_stdout(text)),
-                                    on_stderr=lambda text: asyncio.ensure_future(self.ws.send_process_stderr(text))
-                                )
-                                if install_res.success:
-                                    await self.ws.send_status("running", f"Re-executing {target_to_run}...")
-                                    run_result = await self.runner.run_python_file(
-                                        target_to_run,
-                                        on_stdout=lambda text: asyncio.ensure_future(self.ws.send_process_stdout(text)),
-                                        on_stderr=lambda text: asyncio.ensure_future(self.ws.send_process_stderr(text)),
-                                    )
-                                    await self.ws.send_process_done(run_result.success, run_result.exit_code, run_result.error)
-                                    if run_result.success:
-                                        step.status = StepStatus.COMPLETED
-                                        self.state.completed_steps.add(step.step_number)
-                                        self.state.save(self.workspace_dir / "project_state.json")
-                                        await self.ws.send_step_update(step.step_number, "completed", f"✓ {step.title}")
-                                        return {"success": True}
-                                    else:
-                                        await self.ws.send_error(run_result.error or run_result.stderr, target_to_run)
-                                else:
-                                    await self.ws.send_error(install_res.error or install_res.stderr, target_to_run)
-
-                    # Auto-fix attempt
-                    req_id = str(uuid.uuid4())
-                    await self.ws.send_permission_request(req_id, "Attempt auto-fix with LLM?", default=True)
-                    self._permission_event = asyncio.Event()
-                    try:
-                        await asyncio.wait_for(self._permission_event.wait(), timeout=300)
-                    except asyncio.TimeoutError:
-                        self._permission_response = True
-
-                    if self._permission_response:
-                        fixed = await self._auto_fix(target_to_run, run_result.error or run_result.stderr)
-                        if not fixed:
-                            return {"success": False, "continued": True}
-
         # Mark complete
         step.status = StepStatus.COMPLETED
         self.state.completed_steps.add(step.step_number)
@@ -497,8 +425,60 @@ class Orchestrator:
 
         return {"success": True}
 
+    async def _run_qa_test_loop(self):
+        """
+        Run the QA Agent test loop:
+        1. QA Agent runs main.py and interacts with it
+        2. If bugs are found, send to Fixer
+        3. Re-test until success or MAX_QA_ATTEMPTS reached
+        """
+        from core.qa_agent import QAAgent
+
+        qa = QAAgent(self.llm, self.original_prompt)
+        python_cmd = self.runner._get_python_cmd()
+        main_file = str(self.workspace_dir / "main.py")
+
+        for attempt in range(1, config.MAX_QA_ATTEMPTS + 1):
+            await self.ws.send_status(
+                "testing", f"QA Test attempt {attempt}/{config.MAX_QA_ATTEMPTS}..."
+            )
+
+            qa_result = await qa.test_application(
+                python_cmd=python_cmd,
+                main_file=main_file,
+                workspace=str(self.workspace_dir),
+                on_stdout=lambda text: asyncio.ensure_future(self.ws.send_process_stdout(text)),
+                on_stderr=lambda text: asyncio.ensure_future(self.ws.send_process_stderr(text)),
+                on_status=lambda msg: asyncio.ensure_future(self.ws.send_status("testing", msg)),
+            )
+
+            if qa_result.success:
+                await self.ws.send_status("tested", "✓ QA Agent: Application passed testing!")
+                return
+
+            # Test failed — report and fix
+            error_text = qa_result.bug_report or qa_result.error or qa_result.stderr
+            await self.ws.send_error(error_text, "main.py")
+
+            if attempt < config.MAX_QA_ATTEMPTS:
+                await self.ws.send_status("fixing", f"QA Agent found issues. Auto-fixing...")
+                fixed = await self._auto_fix("main.py", error_text)
+                if not fixed:
+                    await self.ws.send_status("warning", "Auto-fix failed. Retrying QA test...")
+            else:
+                await self.ws.send_status(
+                    "warning",
+                    f"QA Agent: Max test attempts ({config.MAX_QA_ATTEMPTS}) reached. "
+                    f"Application may need manual review.",
+                )
+
+    @property
+    def original_prompt(self) -> str:
+        """Get the original user prompt."""
+        return self.state.original_prompt if self.state else ""
+
     async def _auto_fix(self, file_path: str, error_text: str, verify_execution: bool = True) -> bool:
-        """Run the auto-fix loop."""
+        """Run the auto-fix loop. Automatically installs missing modules."""
         attempts = 0
         current_error = error_text
         target_file = file_path
@@ -506,7 +486,7 @@ class Orchestrator:
         while attempts < config.MAX_FIX_ATTEMPTS:
             attempts += 1
 
-            # Smart error targeting
+            # Smart error targeting — find the actual file from the traceback
             matches = re.findall(r'File "([^"]+)"', current_error)
             if matches:
                 workspace_path = self.workspace_dir.resolve()
@@ -533,17 +513,16 @@ class Orchestrator:
             if not success:
                 await self.ws.send_error(msg, target_file)
                 current_error = msg
-                # Abort loop on fatal non-recoverable errors
                 if "does not exist" in msg or "truncated by the API" in msg:
                     break
                 continue
 
-            # Send updated file
+            # Send updated file to frontend
             full_target = self.workspace_dir / target_file
             if full_target.exists():
                 await self.ws.send_file_update(target_file, full_target.read_text(encoding="utf-8"))
 
-            # Verify
+            # Verify fix by re-running
             if verify_execution:
                 run_result = await self.runner.run_python_file(
                     file_path,
@@ -559,42 +538,30 @@ class Orchestrator:
                 current_error = run_result.error or run_result.stderr
                 await self.ws.send_error(current_error, file_path)
 
+                # Auto-install missing modules without asking
                 parsed_err = ErrorParser.parse_traceback(current_error)
                 if parsed_err.get("is_import_error") and parsed_err.get("missing_module"):
                     missing_mod = parsed_err["missing_module"]
-                    req_id = str(uuid.uuid4())
-                    await self.ws.send_permission_request(
-                        req_id, f"Module '{missing_mod}' is missing. Run pip install {missing_mod}?", default=True
+                    await self.ws.send_status("installing", f"Auto-installing {missing_mod}...")
+                    install_res = await self.runner.install_package(
+                        missing_mod,
+                        on_stdout=lambda text: asyncio.ensure_future(self.ws.send_process_stdout(text)),
+                        on_stderr=lambda text: asyncio.ensure_future(self.ws.send_process_stderr(text)),
                     )
-                    self._permission_event = asyncio.Event()
-                    try:
-                        await asyncio.wait_for(self._permission_event.wait(), timeout=300)
-                    except asyncio.TimeoutError:
-                        self._permission_response = True
-                        
-                    if self._permission_response:
-                        await self.ws.send_status("installing", f"Installing {missing_mod}...")
-                        install_res = await self.runner.install_package(
-                            missing_mod,
+                    if install_res.success:
+                        run_result = await self.runner.run_python_file(
+                            file_path,
                             on_stdout=lambda text: asyncio.ensure_future(self.ws.send_process_stdout(text)),
-                            on_stderr=lambda text: asyncio.ensure_future(self.ws.send_process_stderr(text))
+                            on_stderr=lambda text: asyncio.ensure_future(self.ws.send_process_stderr(text)),
                         )
-                        if install_res.success:
-                            await self.ws.send_status("running", f"Re-executing {file_path}...")
-                            run_result = await self.runner.run_python_file(
-                                file_path,
-                                on_stdout=lambda text: asyncio.ensure_future(self.ws.send_process_stdout(text)),
-                                on_stderr=lambda text: asyncio.ensure_future(self.ws.send_process_stderr(text)),
-                            )
-                            await self.ws.send_process_done(run_result.success, run_result.exit_code, run_result.error)
-                            if run_result.success:
-                                await self.ws.send_status("fixed", "Fix resolved the error after install!")
-                                return True
-                            current_error = run_result.error or run_result.stderr
-                            await self.ws.send_error(current_error, file_path)
+                        await self.ws.send_process_done(run_result.success, run_result.exit_code, run_result.error)
+                        if run_result.success:
+                            await self.ws.send_status("fixed", "Fix resolved the error after install!")
+                            return True
+                        current_error = run_result.error or run_result.stderr
+                        await self.ws.send_error(current_error, file_path)
             else:
-                # Bypass running the file (useful for manual followup where user wants to test manually)
-                await self.ws.send_status("fixed", "Code updated based on feedback! (Testing skipped)")
+                await self.ws.send_status("fixed", "Code updated. (Execution verification skipped)")
                 return True
 
         await self.ws.send_error(f"Max fix attempts ({config.MAX_FIX_ATTEMPTS}) reached.", file_path)
