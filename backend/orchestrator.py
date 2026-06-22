@@ -149,8 +149,9 @@ class Orchestrator:
         if not self.state.original_prompt:
             return {"success": False, "error": "No prompt provided"}
 
-        self.state.status = "planning"
-        await self.ws.send_status("planning", "Generating implementation plan...")
+        # Phase 1: Architecture Blueprint
+        self.state.status = "architecting"
+        await self.ws.send_status("planning", "Designing system architecture...")
 
         # Chunking check
         planning_prompt = self.state.original_prompt
@@ -158,16 +159,43 @@ class Orchestrator:
             chunks = SmartChunker.chunk(planning_prompt)
             planning_prompt = chunks[0] + "\n\n[Prompt truncated for planning...]"
 
+        # Stream architecture generation
+        arch_chunks = []
+        def on_arch_token(token: str):
+            arch_chunks.append(token)
+            asyncio.ensure_future(self.ws.send_llm_token(token))
+
+        try:
+            arch_text = await self.planner.generate_architecture(planning_prompt, on_token=on_arch_token)
+            await self.ws.send_llm_done(arch_text)
+            
+            # Save architecture
+            arch_path = self.workspace_dir / "architecture.md"
+            arch_path.write_text(arch_text, encoding="utf-8")
+            self.state.architecture_text = arch_text
+            self.state.save(self.workspace_dir / "project_state.json")
+            
+        except Exception as e:
+            err_msg = str(e)
+            if hasattr(e, 'response'):
+                err_msg = f"API Error: HTTP {e.response.status_code} - The selected model may not exist or is unavailable."
+            await self.ws.send_error(err_msg)
+            self.state.status = "failed"
+            return {"success": False, "error": err_msg}
+
+        # Phase 2: Plan Generation
+        self.state.status = "planning"
+        await self.ws.send_status("planning", "Generating implementation plan...")
+
         # Stream plan generation
         llm_chunks = []
-
         def on_token(token: str):
             llm_chunks.append(token)
             # Schedule broadcast on the event loop
             asyncio.ensure_future(self.ws.send_llm_token(token))
 
         try:
-            plan_text = await self.planner.generate_plan(planning_prompt, on_token=on_token)
+            plan_text = await self.planner.generate_plan(planning_prompt, self.state.architecture_text, on_token=on_token)
             await self.ws.send_llm_done(plan_text)
         except Exception as e:
             err_msg = str(e)
@@ -668,14 +696,9 @@ class Orchestrator:
 
     async def _request_input(self) -> str:
         """Called by Runner when process hangs on stdin."""
-        await self.ws.send_input_request("Process is waiting for input...")
-        self._input_event = asyncio.Event()
-        self._input_response = ""
-        try:
-            await asyncio.wait_for(self._input_event.wait(), timeout=300)
-        except asyncio.TimeoutError:
-            self._input_response = ""
-        return self._input_response
+        # The user NEVER wants human input. Automate the response to avoid hanging.
+        log.info("Process asked for input during testing. Supplying automated 'exit' command to prevent blocking.")
+        return "exit"
 
     async def send_input(self, text: str) -> dict:
         """Send user input to the running process."""

@@ -8,6 +8,7 @@ Cross-platform compatible (Windows + Linux).
 
 from __future__ import annotations
 import logging
+import re
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -108,128 +109,231 @@ class Fixer:
             error_text=error_text,
         )
 
-        # 4. Generate fix — filter out <think>/<brief_plan> blocks from UI stream
-        chunks = []
-        in_hidden_block = False
-        stream_buffer = ""
-        
-        def filtered_on_token(token: str):
-            nonlocal in_hidden_block, stream_buffer
-            stream_buffer += token
-            
-            if not in_hidden_block:
-                for tag in ("<think>", "<brief_plan>"):
-                    if tag in stream_buffer:
-                        in_hidden_block = True
-                        pre_tag = stream_buffer.split(tag)[0]
-                        if pre_tag and on_token:
-                            on_token(pre_tag)
-                        stream_buffer = stream_buffer.split(tag, 1)[1]
-                        break
-                else:
-                    if len(stream_buffer) > 13:
-                        safe_str = stream_buffer[:-13]
-                        stream_buffer = stream_buffer[-13:]
-                        if on_token:
-                            on_token(safe_str)
-                            
-            if in_hidden_block:
-                for tag in ("</think>", "</brief_plan>"):
-                    if tag in stream_buffer:
-                        in_hidden_block = False
-                        stream_buffer = stream_buffer.split(tag, 1)[1]
-                        break
-        
-        try:
-            async for chunk in self.llm.generate_stream(
-                prompt=ctx["prompt"],
-                system=ctx["system"],
-                on_token=filtered_on_token if on_token else None,
-            ):
-                chunks.append(chunk)
-            
-            # Flush remaining buffer
-            if not in_hidden_block and stream_buffer and on_token:
-                on_token(stream_buffer)
-                
-        except Exception as e:
-            return False, f"LLM Generation Error: {str(e)}", []
-
-        raw_output = "".join(chunks)
-
-        if not raw_output.strip():
-            return False, "LLM returned empty output", []
-
-        # Extract brief plan for the history summary
-        brief_plan_match = re.search(r'<brief_plan>(.*?)</brief_plan>', raw_output, re.DOTALL | re.IGNORECASE)
-        brief_plan = brief_plan_match.group(1).strip() if brief_plan_match else "Fixed bugs."
-
-        # 5. Extract fixed code blocks
-        # Look for `# FILE: <path>` followed by a code block
-        file_blocks = []
-        pattern = r'#\s*FILE:\s*([^\n]+)\n.*?```(?:python|py)?\s*\n(.*?)(?:```|\Z)'
-        matches = re.finditer(pattern, raw_output, re.DOTALL | re.IGNORECASE)
-        
-        for match in matches:
-            path = match.group(1).strip(' `\'"')
-            code = match.group(2).strip()
-            file_blocks.append((path, code))
-            
-        # Fallback: if no multi-file headers found, assume it's a single file fix for target_file
-        if not file_blocks:
-            code = self.coder._extract_code(raw_output, target_file)
-            if len(code) > 10:
-                file_blocks.append((target_file, code))
-
-        if not file_blocks:
-            return False, "LLM failed to generate a valid fix (no code blocks found)", []
-
+        # 4. Agentic Loop
+        max_iterations = 5
+        current_prompt = ctx["prompt"]
+        system_prompt = ctx["system"]
         fixed_files_list = []
+        brief_plan = "Fixed bugs."
         
-        # Apply all fixes
-        for fpath, fixed_code in file_blocks:
-            # Clean paths
-            fpath = _normalize_path(fpath)
-            # Remove any leading / or workspace prefixes
-            if fpath.startswith("/"):
-                fpath = fpath.lstrip("/")
+        for iteration in range(max_iterations):
+            log.info("Fixer: agent loop iteration %d/%d", iteration + 1, max_iterations)
+            chunks = []
+            in_hidden_block = False
+            stream_buffer = ""
             
-            full_fpath = self.workspace / fpath
+            def filtered_on_token(token: str):
+                nonlocal in_hidden_block, stream_buffer
+                stream_buffer += token
+                
+                if not in_hidden_block:
+                    for tag in ("<think>", "<brief_plan>"):
+                        if tag in stream_buffer:
+                            in_hidden_block = True
+                            pre_tag = stream_buffer.split(tag)[0]
+                            if pre_tag and on_token:
+                                on_token(pre_tag)
+                            stream_buffer = stream_buffer.split(tag, 1)[1]
+                            break
+                    else:
+                        if len(stream_buffer) > 13:
+                            safe_str = stream_buffer[:-13]
+                            stream_buffer = stream_buffer[-13:]
+                            if on_token:
+                                on_token(safe_str)
+                                
+                if in_hidden_block:
+                    for tag in ("</think>", "</brief_plan>"):
+                        if tag in stream_buffer:
+                            in_hidden_block = False
+                            stream_buffer = stream_buffer.split(tag, 1)[1]
+                            break
+
+            try:
+                async for chunk in self.llm.generate_stream(
+                    prompt=current_prompt,
+                    system=system_prompt,
+                    on_token=filtered_on_token if on_token else None,
+                ):
+                    chunks.append(chunk)
+                
+                if not in_hidden_block and stream_buffer and on_token:
+                    on_token(stream_buffer)
+            except Exception as e:
+                return False, f"LLM Generation Error: {str(e)}", []
+                
+            raw_output = "".join(chunks)
+            if not raw_output.strip():
+                return False, "LLM returned empty output", []
+                
+            # Extract brief plan for the history summary
+            plan_match = re.search(r'<brief_plan>(.*?)</brief_plan>', raw_output, re.DOTALL | re.IGNORECASE)
+            if plan_match:
+                brief_plan = plan_match.group(1).strip()
+
+            # Append assistant's response to prompt history
+            current_prompt += f"\n\nASSISTANT:\n{raw_output}\n\n"
             
-            # Safety Check: Prevent overwriting with a truncated diff/snippet
-            if "# ..." in fixed_code or "# existing" in fixed_code.lower() or "# ... existing" in fixed_code.lower():
-                return False, f"LLM returned a placeholder snippet for {fpath}. You MUST output the ENTIRE file without using '# ...' placeholders.", []
+            # Check for <view_file> tags
+            view_matches = list(re.finditer(r'<view_file>\s*(.*?)\s*</view_file>', raw_output, re.IGNORECASE))
+            if view_matches:
+                system_reply = "SYSTEM:\n"
+                for m in view_matches:
+                    fpath = _normalize_path(m.group(1).strip())
+                    if fpath.startswith("/"):
+                        fpath = fpath.lstrip("/")
+                    full_path = self.workspace / fpath
+                    if full_path.exists():
+                        system_reply += f"--- {fpath} ---\n```python\n{full_path.read_text(encoding='utf-8')}\n```\n\n"
+                    else:
+                        system_reply += f"--- {fpath} ---\nFILE NOT FOUND\n\n"
+                
+                current_prompt += system_reply
+                log.info("Fixer: agent requested to view files, continuing loop")
+                continue  # Loop back to let the LLM think again
+                
+            # Parse edit blocks (both new <edit_file> and legacy # FILE: format)
+            file_edits = {}
+            current_file = None
+            state = "idle"  # idle, search, replace
+            search_block = []
+            replace_block = []
 
-            # If the file exists, do a length sanity check
-            if full_fpath.exists():
-                current_len = len(full_fpath.read_text(encoding="utf-8"))
-                if len(fixed_code) < current_len * 0.4 and current_len > 200:
-                    return False, f"LLM returned a truncated file for {fpath}. You MUST output the ENTIRE file contents.", []
+            lines = raw_output.splitlines()
+            for line in lines:
+                # Handle <edit_file path="..."> tag
+                edit_match = re.match(r'<edit_file\s+path=["\']([^"\']+)["\'](?:[^>]*)>', line, re.IGNORECASE)
+                if edit_match:
+                    current_file = edit_match.group(1).strip()
+                    if current_file not in file_edits:
+                        file_edits[current_file] = []
+                    state = "idle"
+                    continue
+                    
+                # Handle legacy # FILE: format just in case
+                if line.startswith("# FILE:"):
+                    current_file = line.replace("# FILE:", "").strip().strip(' `\'"')
+                    if current_file not in file_edits:
+                        file_edits[current_file] = []
+                    state = "idle"
+                    continue
+                
+                if line.strip().lower() == "</edit_file>":
+                    current_file = None
+                    state = "idle"
+                    continue
+                
+                if current_file:
+                    if line.strip() == "<<<<<<< SEARCH":
+                        state = "search"
+                        search_block = []
+                        continue
+                    elif line.strip() == "=======":
+                        state = "replace"
+                        replace_block = []
+                        continue
+                    elif line.strip() == ">>>>>>> REPLACE":
+                        if search_block or replace_block:
+                            file_edits[current_file].append({
+                                "search": "\n".join(search_block),
+                                "replace": "\n".join(replace_block)
+                            })
+                        state = "idle"
+                        continue
+                    
+                    if state == "search":
+                        search_block.append(line)
+                    elif state == "replace":
+                        replace_block.append(line)
 
-            # Save fixed file
-            full_fpath.parent.mkdir(parents=True, exist_ok=True)
-            full_fpath.write_text(fixed_code, encoding="utf-8")
-            log.info("Fixer: applied fix to %s", fpath)
-            fixed_files_list.append(fpath)
+            # Fallback for full file replacements if LLM outputs full markdown blocks
+            if not file_edits:
+                pattern = r'#\s*FILE:\s*([^\n]+)\n.*?```(?:python|py)?\s*\n(.*?)(?:```|\Z)'
+                matches = list(re.finditer(pattern, raw_output, re.DOTALL | re.IGNORECASE))
+                if matches:
+                    for match in matches:
+                        path = match.group(1).strip(' `\'"')
+                        code = match.group(2).strip()
+                        file_edits[path] = [{"search": "FULL_FILE_REPLACE", "replace": code}]
+                else:
+                    # If there's no edit but there is a <done>, we just exit normally
+                    if "<done>" in raw_output.lower():
+                        break
+                    
+                    # If we reached here, no valid tool was called. Send error to agent.
+                    current_prompt += "SYSTEM:\nYou did not use <view_file>, <edit_file>, or <done>. Please output valid XML tags to proceed.\n\n"
+                    log.info("Fixer: agent outputted invalid tags, looping back")
+                    continue
+                    
+            # Apply all fixes
+            edit_success = True
+            for fpath, edits in file_edits.items():
+                fpath = _normalize_path(fpath)
+                if fpath.startswith("/"):
+                    fpath = fpath.lstrip("/")
+                
+                full_fpath = self.workspace / fpath
+                if not full_fpath.exists():
+                    current_prompt += f"SYSTEM:\nTarget file does not exist: {fpath}. Make sure the path is correct.\n\n"
+                    edit_success = False
+                    break
+                
+                content = full_fpath.read_text(encoding="utf-8")
+                
+                # Apply edits sequentially
+                for i, edit in enumerate(edits):
+                    search_text = edit["search"]
+                    replace_text = edit["replace"]
+                    
+                    if search_text == "FULL_FILE_REPLACE":
+                        content = replace_text
+                    elif search_text not in content:
+                        if search_text.strip() in content:
+                            content = content.replace(search_text.strip(), replace_text.strip())
+                        else:
+                            current_prompt += f"SYSTEM:\nCould not find exact SEARCH block in {fpath}. Since SEARCH/REPLACE failed, on your next attempt, please output the ENTIRE rewritten file inside a ```python block as a fallback.\n\n"
+                            edit_success = False
+                            break
+                    else:
+                        content = content.replace(search_text, replace_text, 1)
 
-            # 6. Syntax check the fix immediately
-            if fpath.endswith(".py"):
-                syntax_result = await self.runner.syntax_check(fpath)
-                if not syntax_result.success:
-                    log.warning("Fixer: fix introduced a syntax error in %s: %s", fpath, syntax_result.error)
-                    return False, f"Fix introduced Syntax Error in {fpath}:\n{syntax_result.error}", []
-
-            # 7. Update registry
-            entry = FileRegistryBuilder.parse_file(full_fpath, fpath)
-            if entry:
-                self.coder._update_registry(entry)
-
+                if edit_success:
+                    # Save fixed file
+                    full_fpath.write_text(content, encoding="utf-8")
+                    log.info("Fixer: applied edit to %s", fpath)
+                    if fpath not in fixed_files_list:
+                        fixed_files_list.append(fpath)
+                    
+                    # Syntax check
+                    if fpath.endswith(".py"):
+                        syntax_result = await self.runner.syntax_check(fpath)
+                        if not syntax_result.success:
+                            current_prompt += f"SYSTEM:\nFix introduced Syntax Error in {fpath}:\n{syntax_result.error}\nPlease fix the syntax error.\n\n"
+                            edit_success = False
+                            break
+                            
+                    # Update registry
+                    entry = FileRegistryBuilder.parse_file(full_fpath, fpath)
+                    if entry:
+                        self.coder._update_registry(entry)
+                        
+            if not edit_success:
+                log.info("Fixer: edit failed or syntax error, looping back")
+                continue # Loop back so LLM can fix its mistake
+                
+            # If edits succeeded and it output <done>, break
+            if "<done>" in raw_output.lower():
+                break
+                
         # 8. Record in fix history
         self.state.fix_history.append({
             "error_message": error_text,
             "fixed_files": fixed_files_list,
             "summary": brief_plan
         })
+
+        if not fixed_files_list:
+            return False, "Agent loop completed without applying any successful edits.", []
 
         return True, f"Successfully applied fixes to: {', '.join(fixed_files_list)}", fixed_files_list
 

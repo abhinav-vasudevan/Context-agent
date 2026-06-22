@@ -272,8 +272,23 @@ ABSOLUTE RULES — violating ANY means failure:
 4. Your output is saved directly as a .md or .txt file.
 """
 
-    PLANNER_SYSTEM_PROMPT = """You are an expert project planner and system architect.
-Your job is to take a user's high-level request and produce a VERY DETAILED, step-by-step implementation plan.
+    ARCHITECT_SYSTEM_PROMPT = """You are an elite Software Architect.
+Your job is to read a user's prompt and output a MASSIVE, highly detailed architectural blueprint (`architecture.md`).
+You MUST use deep Chain-of-Thought reasoning to organically deduce the full scale of the system.
+If the user asks for a simple script, design a simple script. 
+If the user asks for an Operating System, an AI Agent, or a complex application, you MUST deduce the massive, multi-module architecture required to make it production-ready. Do NOT be lazy. Output thousands of words if necessary. Your blueprint must be EXHAUSTIVE.
+
+MANDATORY SECTIONS:
+1. `# System Architecture` (At least 500 words explaining the core design philosophy).
+2. `## Core Components` (List EVERY module needed, e.g., `src/memory.py`, `src/config.py`, `src/utils.py`, `src/error_handlers.py`, etc. For EACH file, write a 200+ word deep-dive explaining its exact logic, function signatures, and internal behaviors).
+3. `## Data Structures` (Define all exact JSON schemas, classes, and state properties).
+4. `## Edge Cases & Error Handling`
+
+DO NOT write actual code files. Just write the highly detailed design document.
+"""
+
+    PLANNER_SYSTEM_PROMPT = """You are an expert project planner.
+Your job is to take a detailed Architectural Blueprint and translate it into a strict, step-by-step implementation plan.
 
 MANDATORY RULES:
 1. Step 1 MUST ALWAYS be creating `main.py` at the root. It MUST be a completely empty skeleton with NO imports. Just `if __name__ == "__main__":` and `pass`.
@@ -282,7 +297,9 @@ MANDATORY RULES:
 4. The LAST step MUST be creating `README.md`.
 5. Each step produces EXACTLY ONE file.
 6. Steps must be numbered sequentially and have clear dependencies.
-7. DYNAMIC SCALING: You must dynamically decide the number of files based on the complexity of the request. For a simple script or calculator, generate 1-3 files. For a complex operating system, an AI agent, or a backend server, you MUST generate a massive, exhaustive architecture with dozens of files spanning error handlers, databases, APIs, core utilities, and configuration managers. ALWAYS aim for production-ready, highly modular code.
+7. DYNAMIC SCALING (CRITICAL ARCHITECTURE RULE): You must dynamically decide the number of files based on the complexity of the request.
+   - For a simple script or calculator: generate 1-3 files.
+   - For a complex application (e.g., an AI agent, an OS, a web backend): You MUST output AT LEAST 10-15 STEPS (files). Break the logic down heavily into modular components (e.g., `src/memory_manager.py`, `src/tools_file_ops.py`, `src/llm_client.py`, `src/config_loader.py`, `src/utils.py`, `src/prompts.py`, `src/error_handlers.py`). If you group logic into giant files or output fewer than 10 files for a complex request, you will FAIL. ALWAYS aim for an exhaustive, production-ready architecture.
 8. MANDATORY README.md Rules:
    - NEVER include fake git clone instructions or assume a git repository exists. Only document how to activate the venv and run the code.
    - ALWAYS explicitly mention what the AI actually built (the features, the system).
@@ -290,7 +307,8 @@ MANDATORY RULES:
    - ALWAYS explain any terminology used in the system interface (e.g., if there's a chat prompt, explain what "User:", "Bot:", "Agent:" means and what the user is expected to type).
 9. MANDATORY: Be explicitly precise about function signatures and required positional arguments in the Architecture and Descriptions so the coder knows exactly how to wire components together!
 10. MANDATORY: Explicitly instruct the coder to NEVER use hardcoded placeholder values or dummy data in the final integration (e.g. main.py). The system MUST be wired up dynamically using actual user inputs or API responses.
-11. CRITICAL: DO NOT use `<think>` tags, `<brief_plan>` tags, reasoning blocks, or preamble. You MUST start your response directly with `# [Project Title]`.
+11. MANDATORY: ALWAYS include a step to generate a `requirements.txt` file listing all third-party dependencies.
+12. CRITICAL: DO NOT use `<think>` tags, `<brief_plan>` tags, reasoning blocks, or preamble. You MUST start your response directly with `# [Project Title]`.
 
 OUTPUT FORMAT — FOLLOW THIS EXACTLY:
 You MUST structure your response EXACTLY like the template below. Do NOT deviate from this structure in any way. Do NOT use markdown code blocks to wrap the plan. Do NOT add conversational preamble like "Here is your plan". Every plan you output must be character-for-character identical in structure to this template.
@@ -345,11 +363,18 @@ DESCRIPTION:
 (continue for all implementation steps...)
 
 ---
-STEP N: Create README.md
-FILE: README.md
-DEPENDS: 1, 2, ..., N-1
+STEP N: Create requirements.txt
+FILE: requirements.txt
+DEPENDS: [all relevant steps]
 DESCRIPTION:
-Create comprehensive documentation. Include: project description, how to activate venv, how to run, all features built, usage examples, and any manual setup required.
+List all third-party dependencies required by the project (e.g., requests, fastapi, pydantic) with versions if necessary.
+
+---
+STEP N+1: Create README.md
+FILE: README.md
+DEPENDS: [all previous steps]
+DESCRIPTION:
+Create comprehensive documentation. Include: project description, how to activate venv, how to install dependencies from requirements.txt, how to run, all features built, usage examples, and any manual setup required.
 
 === END TEMPLATE ===
 
@@ -365,40 +390,52 @@ FORMATTING RULES (violating any means failure):
 - Do NOT wrap the plan in a markdown code block.
 - Do NOT number the steps with `1.`, `2.` format — use `STEP 1:`, `STEP 2:` format only."""
 
-    FIXER_SYSTEM_PROMPT = """You are an expert Python debugger. You are given:
-1. A Python file (or multiple files) that has an error
-2. The error traceback
-3. The project's File Registry (showing all existing files and their APIs)
-4. A History of previously attempted fixes (to prevent you from repeating mistakes)
+    FIXER_SYSTEM_PROMPT = """You are an autonomous Python debugging agent. You are given:
+1. The error traceback
+2. The project's File Registry (showing all existing files and their APIs)
+3. A History of previously attempted fixes (to prevent you from repeating mistakes)
 
-Your job: output the COMPLETE FIXED Python file(s).
+Your job: Explore the codebase, find the bug, and fix it using XML tools.
 
-CRITICAL THINKING RULE (HIGHEST PRIORITY):
-- Do NOT use <think> tags. Do NOT use long reasoning blocks.
-- Your `<brief_plan>` MUST be MAX 15-20 words. Going over = FAILURE.
+AVAILABLE TOOLS:
+You can use the following XML tags to interact with the system. You can use multiple tools in a single response.
 
-RULES:
-1. You MUST start your response with a `<brief_plan> ... </brief_plan>` block. This block MUST be under 20 words.
-2. After the brief plan, you MUST output the fixed files. For EACH file you fix, you MUST provide the file path as a header `# FILE: path/to/file.py`, followed by EXACTLY ONE Markdown code block (```python ... ```) containing the FULL, corrected file.
-3. You may output MULTIPLE files if a fix spans across dependencies (e.g., fixing a function signature in file A and its caller in file B).
-4. NEVER use placeholders like `# ... existing code ...`. You MUST write out every single line of code so the file can be saved directly. Omit nothing!
-5. Use the FILE REGISTRY to ensure imports are correct AND to check exactly what arguments are required.
-6. To fix Circular Imports, NEVER import `main.py` from any file inside `src/`. Remove the circular import completely.
-7. Read the PREVIOUS FIXES HISTORY. If a fix failed before, DO NOT try the exact same fix again. Try a different approach.
+1. `<view_file>path/to/file.py</view_file>`
+Use this to read the contents of any file in the workspace. The system will reply with the file contents.
 
-EXAMPLE MULTI-FILE OUTPUT:
-<brief_plan>Update calc_sum signature in calc.py and fix the caller in math_ops.py.</brief_plan>
-# FILE: src/calc.py
-```python
-def calc_sum(a: int, b: int) -> int:
-    return a + b
-```
+2. `<edit_file path="path/to/file.py">`
+Use this to apply precise SEARCH/REPLACE blocks.
+Format inside the tag:
+<<<<<<< SEARCH
+[exact lines to replace]
+=======
+[new lines]
+>>>>>>> REPLACE
+`</edit_file>`
 
-# FILE: src/math_ops.py
-```python
-from src.calc import calc_sum
-result = calc_sum(5, 10)
-```
+3. `<done>`
+Use this when you believe the bug is fixed and you want the system to test the code.
+
+CRITICAL RULES:
+1. NEVER guess! If you see an error in `main.py` calling `src/utils.py`, use `<view_file>src/utils.py</view_file>` to see the actual function signature before trying to fix it.
+2. You MUST start your thought process with a `<brief_plan>` block explaining what you are investigating.
+3. If `<edit_file>` fails due to a bad SEARCH block, try again or use the fallback: `<edit_file path="..." fallback="true"> [Full file contents] </edit_file>`.
+4. Only use `<done>` when you have actually made edits using `<edit_file>`.
+
+EXAMPLE WORKFLOW:
+<brief_plan>Investigating the missing import in main.py</brief_plan>
+<view_file>src/main.py</view_file>
+<view_file>src/config.py</view_file>
+... (System returns file contents) ...
+<brief_plan>Fixing the import.</brief_plan>
+<edit_file path="src/main.py">
+<<<<<<< SEARCH
+from src.config import get_cfg
+=======
+from src.config import Config
+>>>>>>> REPLACE
+</edit_file>
+<done>
 """
 
     SUMMARY_SYSTEM_PROMPT = """Summarize what this code file does in ONE concrete sentence.
@@ -421,6 +458,15 @@ Output ONLY the one-sentence summary, nothing else."""
                 self.knowledge = "\n\n=== GLOBAL KNOWLEDGE BASE ===\n" + json.dumps(data, indent=2) + "\n=============================\n"
         except Exception as e:
             log.warning("Failed to load knowledge.json: %s", e)
+            
+        self.custom_rules = ""
+        try:
+            if config.CUSTOM_RULES_FILE.exists():
+                rules_text = config.CUSTOM_RULES_FILE.read_text(encoding="utf-8").strip()
+                if rules_text:
+                    self.custom_rules = f"\n\n=== STRICT PROJECT RULES (.contextrules) ===\nYou MUST follow these rules exactly on every request:\n\n{rules_text}\n============================================\n"
+        except Exception as e:
+            log.warning("Failed to load .contextrules: %s", e)
 
     def build_coder_prompt(self, step: PlanStep) -> dict:
         """
@@ -445,7 +491,21 @@ Output ONLY the one-sentence summary, nothing else."""
         parts.append(step_block)
         used += step_tokens
 
-        # 3. Previous step summaries (compressed if needed)
+        # 3. Architecture Blueprint (compressed if needed)
+        arch = self.state.architecture_text
+        if arch:
+            arch_block = f"\n=== SYSTEM ARCHITECTURE BLUEPRINT ===\n{arch}\n=====================================\n"
+            arch_tokens = LLMClient.count_tokens(arch_block)
+            remaining_for_arch = budget - used - config.MIN_GENERATION_BUDGET - 1000 # Leave room for summaries
+            if arch_tokens <= remaining_for_arch:
+                parts.append(arch_block)
+                used += arch_tokens
+            elif remaining_for_arch > 500:
+                truncated_arch = LLMClient.truncate_to_tokens(arch_block, remaining_for_arch)
+                parts.append(truncated_arch)
+                used += LLMClient.count_tokens(truncated_arch)
+
+        # 4. Previous step summaries (compressed if needed)
         summaries = self.state.get_completed_summaries()
         if summaries:
             summary_block = f"\nCOMPLETED STEPS:\n{summaries}\n"
@@ -469,6 +529,8 @@ Output ONLY the one-sentence summary, nothing else."""
         system_prompt = self.MARKDOWN_SYSTEM_PROMPT if step.file_path.endswith((".md", ".txt")) else self.CODER_SYSTEM_PROMPT
         if self.knowledge:
             system_prompt += self.knowledge
+        if self.custom_rules:
+            system_prompt += self.custom_rules
 
         return {
             "system": system_prompt,
@@ -510,19 +572,32 @@ Output ONLY the one-sentence summary, nothing else."""
 
         # Instruction
         parts.append(
-            "Output the COMPLETE FIXED file content. If you need to fix multiple files, "
-            "use the '# FILE: path/to/file.py' format before each code block. "
-            "Use the FILE REGISTRY for correct imports."
+            "Use the provided XML tags (<view_file>, <edit_file>, <done>) to explore the codebase and fix the error autonomously."
         )
 
+        system_prompt = self.FIXER_SYSTEM_PROMPT
+        if self.custom_rules:
+            system_prompt += self.custom_rules
+
         return {
-            "system": self.FIXER_SYSTEM_PROMPT,
+            "system": system_prompt,
             "prompt": "\n\n".join(parts),
         }
 
-    def build_planner_prompt(self, user_prompt: str) -> dict:
+    def build_architect_prompt(self, user_prompt: str) -> dict:
+        """Build the prompt for the Architecture generation phase."""
+        system_prompt = self.ARCHITECT_SYSTEM_PROMPT + self.knowledge
+        if self.custom_rules:
+            system_prompt += self.custom_rules
+
+        return {
+            "system": system_prompt,
+            "prompt": f"USER REQUEST:\n{user_prompt}\n\nOutput your hyper-detailed architectural design blueprint now.",
+        }
+
+    def build_planner_prompt(self, user_prompt: str, architecture_text: str) -> dict:
         """Build the prompt for plan generation."""
-        prompt = f"""Create an EXTREMELY DETAILED implementation plan for the following project.
+        prompt = f"""Create an EXTREMELY DETAILED implementation plan for the following project based on the Architectural Blueprint.
 
 CRITICAL REMINDERS:
 1. Start your response with `# [Project Title]` — NO preamble, NO thinking blocks, NO conversational text.
@@ -535,10 +610,18 @@ CRITICAL REMINDERS:
 USER REQUEST:
 {user_prompt}
 
-Output a comprehensive `## Requirements & Acceptance Criteria` section with numbered requirements, a `## Technical Architecture` section with data structures, modules, and edge cases, then the `## Implementation Plan` with STEP/FILE/DEPENDS/DESCRIPTION blocks separated by `---`.
+=== ARCHITECTURAL BLUEPRINT (TRANSLATE THIS INTO STEPS) ===
+{architecture_text}
+===========================================================
+
+Output the `## Implementation Plan` with STEP/FILE/DEPENDS/DESCRIPTION blocks separated by `---`.
 """
+        system_prompt = self.PLANNER_SYSTEM_PROMPT + self.knowledge
+        if self.custom_rules:
+            system_prompt += self.custom_rules
+
         return {
-            "system": self.PLANNER_SYSTEM_PROMPT + self.knowledge,
+            "system": system_prompt,
             "prompt": prompt,
         }
 
@@ -568,12 +651,13 @@ Output a comprehensive `## Requirements & Acceptance Criteria` section with numb
 RULES:
 1. Output the COMPLETE updated main.py file.
 2. IF the new module provides classes or functions, add an import statement for it (e.g. `from src.<module> import <Class/function>`).
-3. IF it provides classes or functions, add a usage example or integration in the `if __name__ == "__main__"` block.
+3. IF it provides classes or functions, actually INTEGRATE it in the `if __name__ == "__main__"` block by wiring it up to the existing system.
 4. IF the new module does NOT provide any classes or functions (e.g. it is just an empty script or entry point), DO NOT add any imports and DO NOT modify `main.py` except returning it exactly as it was.
 5. Keep ALL existing imports and code — only ADD the new integration.
 6. NO markdown, NO explanations. Output only raw Python code.
 7. MANDATORY: Meticulously check the function signatures and class definitions of the new module. Ensure ALL required positional arguments are provided when you instantiate classes or call functions!
 8. NEVER pass undefined variables as arguments. Always initialize necessary dependencies first.
+9. CRITICAL RULE: NEVER use dummy data, placeholders, or hardcoded fake paths like `example.txt` or `Hello World`. You MUST use real relative paths inside the workspace, or dynamically generate data, or bind it properly to the actual application logic.
 """
 
         prompt = f"""Current main.py content:
