@@ -277,12 +277,12 @@ Your job is to take a user's high-level request and produce a VERY DETAILED, ste
 
 MANDATORY RULES:
 1. Step 1 MUST ALWAYS be creating `main.py` at the root. It MUST be a completely empty skeleton with NO imports. Just `if __name__ == "__main__":` and `pass`.
-2. All other source files MUST go inside `src/` directory. Do NOT create nested directories like `src/src/` or `src/components/`. All source files MUST be placed directly inside `src/` (e.g., `src/calculator.py`).
+2. All other source files MUST go inside `src/`.
 3. There MUST be only ONE step for `main.py`. The system will automatically update it later, so do NOT create an 'update main.py' step.
 4. The LAST step MUST be creating `README.md`.
 5. Each step produces EXACTLY ONE file.
 6. Steps must be numbered sequentially and have clear dependencies.
-7. IMPORTANT: You MAY build interactive applications using `input()` or `while True:` loops. If you do, ensure you handle exceptions gracefully and provide clear prompts so the user knows what to type. If generating a script without interactivity, you MUST include simple hardcoded test calls inside an `if __name__ == "__main__":` block to verify functionality.
+7. DYNAMIC SCALING: You must dynamically decide the number of files based on the complexity of the request. For a simple script or calculator, generate 1-3 files. For a complex operating system, an AI agent, or a backend server, you MUST generate a massive, exhaustive architecture with dozens of files spanning error handlers, databases, APIs, core utilities, and configuration managers. ALWAYS aim for production-ready, highly modular code.
 8. MANDATORY README.md Rules:
    - NEVER include fake git clone instructions or assume a git repository exists. Only document how to activate the venv and run the code.
    - ALWAYS explicitly mention what the AI actually built (the features, the system).
@@ -366,24 +366,40 @@ FORMATTING RULES (violating any means failure):
 - Do NOT number the steps with `1.`, `2.` format — use `STEP 1:`, `STEP 2:` format only."""
 
     FIXER_SYSTEM_PROMPT = """You are an expert Python debugger. You are given:
-1. A Python file that has an error
+1. A Python file (or multiple files) that has an error
 2. The error traceback
 3. The project's File Registry (showing all existing files and their APIs)
+4. A History of previously attempted fixes (to prevent you from repeating mistakes)
 
-Your job: output the COMPLETE FIXED Python file. The entire file content, not just the fix.
+Your job: output the COMPLETE FIXED Python file(s).
 
 CRITICAL THINKING RULE (HIGHEST PRIORITY):
 - Do NOT use <think> tags. Do NOT use long reasoning blocks.
 - Your `<brief_plan>` MUST be MAX 15-20 words. Going over = FAILURE.
 
 RULES:
-1. You MUST start your response with a `<brief_plan> ... </brief_plan>` block. This block MUST be under 20 words. Example: `<brief_plan>Fix missing import for requests module and correct function signature.</brief_plan>`
-2. After the brief plan, you MUST output EXACTLY ONE Markdown code block (```python ... ```) containing the FULL, corrected file. Do NOT output partial files or diffs.
-3. NEVER use placeholders like `# ... existing code ...` or `# ... rest of file ...`. You MUST write out every single line of code so the file can be saved directly. Omit nothing!
-4. Keep all existing logic that is NOT related to the bug.
-5. Use the FILE REGISTRY to ensure imports are correct AND to check exactly what arguments are required by functions or methods you are calling. Do not guess function signatures!
-6. To fix Circular Imports (`ImportError: cannot import name...`), NEVER import `main.py` from any file inside `src/`. Remove the circular import completely.
-7. CRITICAL: DO NOT output any conversational text like "Here is the fixed code" or "The error was caused by...". All reasoning MUST be strictly inside the `<brief_plan>` block. The REST of the output MUST be ONLY the markdown code block containing the Python code."""
+1. You MUST start your response with a `<brief_plan> ... </brief_plan>` block. This block MUST be under 20 words.
+2. After the brief plan, you MUST output the fixed files. For EACH file you fix, you MUST provide the file path as a header `# FILE: path/to/file.py`, followed by EXACTLY ONE Markdown code block (```python ... ```) containing the FULL, corrected file.
+3. You may output MULTIPLE files if a fix spans across dependencies (e.g., fixing a function signature in file A and its caller in file B).
+4. NEVER use placeholders like `# ... existing code ...`. You MUST write out every single line of code so the file can be saved directly. Omit nothing!
+5. Use the FILE REGISTRY to ensure imports are correct AND to check exactly what arguments are required.
+6. To fix Circular Imports, NEVER import `main.py` from any file inside `src/`. Remove the circular import completely.
+7. Read the PREVIOUS FIXES HISTORY. If a fix failed before, DO NOT try the exact same fix again. Try a different approach.
+
+EXAMPLE MULTI-FILE OUTPUT:
+<brief_plan>Update calc_sum signature in calc.py and fix the caller in math_ops.py.</brief_plan>
+# FILE: src/calc.py
+```python
+def calc_sum(a: int, b: int) -> int:
+    return a + b
+```
+
+# FILE: src/math_ops.py
+```python
+from src.calc import calc_sum
+result = calc_sum(5, 10)
+```
+"""
 
     SUMMARY_SYSTEM_PROMPT = """Summarize what this code file does in ONE concrete sentence.
 Include: file path, class names, function names, and what they do.
@@ -481,10 +497,22 @@ Output ONLY the one-sentence summary, nothing else."""
         # The error
         parts.append(f"ERROR:\n{error_text}")
 
+        # Fix History (Memory)
+        if self.state.fix_history:
+            history_lines = ["PREVIOUS FIXES ATTEMPTED IN THIS PROJECT (Do not repeat failed approaches):"]
+            # Show the last 5 fixes
+            for i, record in enumerate(self.state.fix_history[-5:]):
+                history_lines.append(f"--- Attempt {i+1} ---")
+                history_lines.append(f"Error was: {record.get('error_message', '')[:300]}")
+                history_lines.append(f"Files changed: {', '.join(record.get('fixed_files', []))}")
+                history_lines.append(f"Summary: {record.get('summary', '')}")
+            parts.append("\n".join(history_lines))
+
         # Instruction
         parts.append(
-            "Output the COMPLETE FIXED file content. "
-            "Fix only the error above. Use the FILE REGISTRY for correct imports."
+            "Output the COMPLETE FIXED file content. If you need to fix multiple files, "
+            "use the '# FILE: path/to/file.py' format before each code block. "
+            "Use the FILE REGISTRY for correct imports."
         )
 
         return {

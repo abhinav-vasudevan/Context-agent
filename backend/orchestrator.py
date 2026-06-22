@@ -507,7 +507,7 @@ class Orchestrator:
                 fix_chunks.append(token)
                 asyncio.ensure_future(self.ws.send_llm_token(token))
 
-            success, msg = await self.fixer.fix_error(target_file, current_error, on_token=on_fix_token)
+            success, msg, fixed_files = await self.fixer.fix_error(target_file, current_error, on_token=on_fix_token)
             await self.ws.send_llm_done("".join(fix_chunks))
 
             if not success:
@@ -517,10 +517,11 @@ class Orchestrator:
                     break
                 continue
 
-            # Send updated file to frontend
-            full_target = self.workspace_dir / target_file
-            if full_target.exists():
-                await self.ws.send_file_update(target_file, full_target.read_text(encoding="utf-8"))
+            # Send updated files to frontend
+            for fpath in fixed_files:
+                full_fpath = self.workspace_dir / fpath
+                if full_fpath.exists():
+                    await self.ws.send_file_update(fpath, full_fpath.read_text(encoding="utf-8"))
 
             # Verify fix by re-running
             if verify_execution:

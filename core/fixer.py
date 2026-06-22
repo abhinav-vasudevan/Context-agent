@@ -49,9 +49,9 @@ class Fixer:
         file_path: str,
         error_text: str,
         on_token=None,
-    ) -> Tuple[bool, str]:
+    ) -> Tuple[bool, str, list[str]]:
         """
-        Attempt to fix a broken file.
+        Attempt to fix a broken file (can optionally fix multiple files).
 
         Args:
             file_path: The file that caused the error (if known)
@@ -59,7 +59,7 @@ class Fixer:
             on_token: Optional callback for streaming tokens
 
         Returns:
-            (success, message)
+            (success, message, list_of_modified_files)
         """
         parsed_error = ErrorParser.parse_traceback(error_text)
 
@@ -89,14 +89,15 @@ class Fixer:
             # Ignore internal modules
             if missing == "src" or missing.startswith("src.") or missing.startswith("src/"):
                 log.info("Fixer: ignoring missing internal module '%s'", missing)
-                return False, f"Cannot auto-install internal module '{missing}'. Does the file exist yet?"
+                return False, f"Cannot auto-install internal module '{missing}'. Does the file exist yet?", []
             else:
                 log.info("Fixer: auto-installing missing module: %s", missing)
-                return await self._auto_install_module(missing)
+                success, msg = await self._auto_install_module(missing)
+                return success, msg, []
 
         # 2. Get the current file content
         if not full_target.exists():
-            return False, f"Cannot fix: file {target_file} does not exist"
+            return False, f"Cannot fix: file {target_file} does not exist", []
 
         current_content = full_target.read_text(encoding="utf-8")
 
@@ -152,42 +153,85 @@ class Fixer:
                 on_token(stream_buffer)
                 
         except Exception as e:
-            return False, f"LLM Generation Error: {str(e)}"
+            return False, f"LLM Generation Error: {str(e)}", []
 
         raw_output = "".join(chunks)
 
         if not raw_output.strip():
-            return False, "LLM returned empty output"
+            return False, "LLM returned empty output", []
 
-        # 5. Extract and apply fixed code
-        fixed_code = self.coder._extract_code(raw_output, target_file)
+        # Extract brief plan for the history summary
+        brief_plan_match = re.search(r'<brief_plan>(.*?)</brief_plan>', raw_output, re.DOTALL | re.IGNORECASE)
+        brief_plan = brief_plan_match.group(1).strip() if brief_plan_match else "Fixed bugs."
 
-        if len(fixed_code) < 10:
-            return False, "LLM failed to generate a valid fix"
+        # 5. Extract fixed code blocks
+        # Look for `# FILE: <path>` followed by a code block
+        file_blocks = []
+        pattern = r'#\s*FILE:\s*([^\n]+)\n.*?```(?:python|py)?\s*\n(.*?)(?:```|\Z)'
+        matches = re.finditer(pattern, raw_output, re.DOTALL | re.IGNORECASE)
+        
+        for match in matches:
+            path = match.group(1).strip(' `\'"')
+            code = match.group(2).strip()
+            file_blocks.append((path, code))
+            
+        # Fallback: if no multi-file headers found, assume it's a single file fix for target_file
+        if not file_blocks:
+            code = self.coder._extract_code(raw_output, target_file)
+            if len(code) > 10:
+                file_blocks.append((target_file, code))
 
-        # Safety Check: Prevent overwriting with a truncated diff/snippet
-        if "# ..." in fixed_code or "# existing" in fixed_code.lower() or "# ... existing" in fixed_code.lower():
-            return False, "LLM returned a placeholder snippet instead of the full file. You MUST output the ENTIRE file without using '# ...' placeholders."
+        if not file_blocks:
+            return False, "LLM failed to generate a valid fix (no code blocks found)", []
 
-        if len(fixed_code) < len(current_content) * 0.4 and len(current_content) > 200:
-            return False, "LLM returned a truncated file. You MUST output the ENTIRE file contents, not just a partial snippet."
+        fixed_files_list = []
+        
+        # Apply all fixes
+        for fpath, fixed_code in file_blocks:
+            # Clean paths
+            fpath = _normalize_path(fpath)
+            # Remove any leading / or workspace prefixes
+            if fpath.startswith("/"):
+                fpath = fpath.lstrip("/")
+            
+            full_fpath = self.workspace / fpath
+            
+            # Safety Check: Prevent overwriting with a truncated diff/snippet
+            if "# ..." in fixed_code or "# existing" in fixed_code.lower() or "# ... existing" in fixed_code.lower():
+                return False, f"LLM returned a placeholder snippet for {fpath}. You MUST output the ENTIRE file without using '# ...' placeholders.", []
 
-        # Save fixed file
-        full_target.write_text(fixed_code, encoding="utf-8")
-        log.info("Fixer: applied fix to %s", target_file)
+            # If the file exists, do a length sanity check
+            if full_fpath.exists():
+                current_len = len(full_fpath.read_text(encoding="utf-8"))
+                if len(fixed_code) < current_len * 0.4 and current_len > 200:
+                    return False, f"LLM returned a truncated file for {fpath}. You MUST output the ENTIRE file contents.", []
 
-        # 6. Syntax check the fix immediately
-        syntax_result = await self.runner.syntax_check(target_file)
-        if not syntax_result.success:
-            log.warning("Fixer: fix introduced a syntax error: %s", syntax_result.error)
-            return False, f"Fix introduced Syntax Error:\n{syntax_result.error}"
+            # Save fixed file
+            full_fpath.parent.mkdir(parents=True, exist_ok=True)
+            full_fpath.write_text(fixed_code, encoding="utf-8")
+            log.info("Fixer: applied fix to %s", fpath)
+            fixed_files_list.append(fpath)
 
-        # 7. Update registry
-        entry = FileRegistryBuilder.parse_file(full_target, target_file)
-        if entry:
-            self.coder._update_registry(entry)
+            # 6. Syntax check the fix immediately
+            if fpath.endswith(".py"):
+                syntax_result = await self.runner.syntax_check(fpath)
+                if not syntax_result.success:
+                    log.warning("Fixer: fix introduced a syntax error in %s: %s", fpath, syntax_result.error)
+                    return False, f"Fix introduced Syntax Error in {fpath}:\n{syntax_result.error}", []
 
-        return True, f"Successfully applied fix to {target_file}"
+            # 7. Update registry
+            entry = FileRegistryBuilder.parse_file(full_fpath, fpath)
+            if entry:
+                self.coder._update_registry(entry)
+
+        # 8. Record in fix history
+        self.state.fix_history.append({
+            "error_message": error_text,
+            "fixed_files": fixed_files_list,
+            "summary": brief_plan
+        })
+
+        return True, f"Successfully applied fixes to: {', '.join(fixed_files_list)}", fixed_files_list
 
     async def _auto_install_module(self, module_name: str) -> Tuple[bool, str]:
         """Automatically pip install a missing module."""

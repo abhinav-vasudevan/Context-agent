@@ -130,6 +130,9 @@ class ProjectState:
     # Step summaries — concrete, with function/class names
     step_summaries: List[str] = field(default_factory=list)
 
+    # Fix history — memory of past bugs fixed
+    fix_history: List[dict] = field(default_factory=list)
+
     # Metrics
     total_llm_calls: int = 0
     total_tokens_used: int = 0
@@ -213,6 +216,7 @@ class ProjectState:
                 for f in self.file_registry
             ],
             "step_summaries": self.step_summaries,
+            "fix_history": self.fix_history,
             "total_llm_calls": self.total_llm_calls,
             "total_tokens_used": self.total_tokens_used,
         }
@@ -307,6 +311,7 @@ class ProjectState:
             "completed_steps": list(self.completed_steps),
             "status": self.status,
             "step_summaries": self.step_summaries,
+            "fix_history": self.fix_history,
             "total_llm_calls": self.total_llm_calls,
             "total_tokens_used": self.total_tokens_used,
             "created_at": self.created_at,
@@ -328,6 +333,7 @@ class ProjectState:
         state.completed_steps = set(data.get("completed_steps", []))
         state.status = data.get("status", "idle")
         state.step_summaries = data.get("step_summaries", [])
+        state.fix_history = data.get("fix_history", [])
         state.total_llm_calls = data.get("total_llm_calls", 0)
         state.total_tokens_used = data.get("total_tokens_used", 0)
         state.created_at = data.get("created_at", "")
