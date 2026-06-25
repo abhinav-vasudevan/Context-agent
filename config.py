@@ -31,9 +31,9 @@ GROQ_MODELS = [
 # ── Ollama / LLM Settings ──────────────────────────────────────────────
 USE_GEMINI = False             # Set to True to use Google Gemini instead of Ollama
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-OLLAMA_BASE_URL = "http://127.0.0.1:11434"
-OLLAMA_MODEL = "qwen2.5-coder:14b"
-OLLAMA_NUM_CTX = 1000000          # Context window size (tokens)
+OLLAMA_BASE_URL = "http://127.0.0.1:11435"
+OLLAMA_MODEL = "qwen3.6:27b"
+OLLAMA_NUM_CTX = 16384          # Context window (lowered to 16k for faster inference)
 OLLAMA_TEMPERATURE = 0.3        # Lower = more deterministic, less hallucination
 OLLAMA_REQUEST_TIMEOUT = 600    # seconds — some calls are slow on smaller models
 OLLAMA_MAX_RETRIES = 3          # Retry attempts on transient failures
@@ -42,11 +42,11 @@ OLLAMA_RETRY_BACKOFF = 2.0      # Exponential backoff base (seconds)
 # ── Token Budget ───────────────────────────────────────────────────────
 # We reserve tokens for different context sections.
 # The File Registry and current step get priority.
-TOKEN_BUDGET_SYSTEM_PROMPT = 10000
-TOKEN_BUDGET_FILE_REGISTRY = 200000
-TOKEN_BUDGET_STEP_DESC = 100000
-TOKEN_BUDGET_SUMMARIES = 200000
-MIN_GENERATION_BUDGET = 100000    # Ensures the LLM always has space to write its response without hitting the context ceiling
+TOKEN_BUDGET_SYSTEM_PROMPT = 5000
+TOKEN_BUDGET_FILE_REGISTRY = 20000
+TOKEN_BUDGET_STEP_DESC = 5000
+TOKEN_BUDGET_SUMMARIES = 10000
+MIN_GENERATION_BUDGET = 10000     # Ensures the LLM always has space to write its response
 
 # ── Agent Settings ────────────────────────────────────────────────────
 MAX_FIX_ATTEMPTS = 5             # Max retries when fixing errors (keep low to avoid rate limit exhaustion)
@@ -95,9 +95,10 @@ DANGEROUS_CODE_PATTERNS = [
     r"\bopen\s*\(.*,\s*['\"]w['\"]\s*\).*(?:\/|\\\\)(?!src)",  # writing outside project
 ]
 
-# ── Paths ─────────────────────────────────────────────────────────────
-PROJECT_ROOT = Path(__file__).parent
+# ── Paths ──────────────────────────────────────────────────────────────
+PROJECT_ROOT = Path(__file__).parent.resolve()
 PROJECTS_DIR = PROJECT_ROOT / "projects"
+CUSTOM_RULES_FILE = PROJECT_ROOT / ".contextrules"
 PROJECTS_DIR.mkdir(exist_ok=True)
 
 # ── Platform Detection ────────────────────────────────────────────────

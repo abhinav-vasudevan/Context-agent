@@ -185,6 +185,10 @@
 .tab-pulse.green {
   background: var(--success);
 }
+.tab-pulse.purple {
+  background: #a78bfa;
+  box-shadow: 0 0 6px rgba(167, 139, 250, 0.5);
+}
 
 /* ── Panel Content ───────────────────────────────── */
 .panel-content {

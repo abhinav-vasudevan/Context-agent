@@ -165,8 +165,11 @@ class Orchestrator:
             arch_chunks.append(token)
             asyncio.ensure_future(self.ws.send_llm_token(token))
 
+        def on_arch_thinking(token: str):
+            asyncio.ensure_future(self.ws.send_llm_thinking(token))
+
         try:
-            arch_text = await self.planner.generate_architecture(planning_prompt, on_token=on_arch_token)
+            arch_text = await self.planner.generate_architecture(planning_prompt, on_token=on_arch_token, on_thinking=on_arch_thinking)
             await self.ws.send_llm_done(arch_text)
             
             # Save architecture
@@ -191,11 +194,13 @@ class Orchestrator:
         llm_chunks = []
         def on_token(token: str):
             llm_chunks.append(token)
-            # Schedule broadcast on the event loop
             asyncio.ensure_future(self.ws.send_llm_token(token))
 
+        def on_thinking(token: str):
+            asyncio.ensure_future(self.ws.send_llm_thinking(token))
+
         try:
-            plan_text = await self.planner.generate_plan(planning_prompt, self.state.architecture_text, on_token=on_token)
+            plan_text = await self.planner.generate_plan(planning_prompt, self.state.architecture_text, on_token=on_token, on_thinking=on_thinking)
             await self.ws.send_llm_done(plan_text)
         except Exception as e:
             err_msg = str(e)
@@ -402,7 +407,10 @@ class Orchestrator:
             llm_chunks.append(token)
             asyncio.ensure_future(self.ws.send_llm_token(token))
 
-        success, error = await self.coder.generate_code(step, on_token=on_token)
+        def on_thinking(token: str):
+            asyncio.ensure_future(self.ws.send_llm_thinking(token))
+
+        success, error = await self.coder.generate_code(step, on_token=on_token, on_thinking=on_thinking)
         full_output = "".join(llm_chunks)
         await self.ws.send_llm_done(full_output)
 
@@ -437,7 +445,10 @@ class Orchestrator:
                     int_chunks.append(token)
                     asyncio.ensure_future(self.ws.send_llm_token(token))
 
-                main_success, main_error = await self.coder.update_main_integration(new_entry, on_token=on_int_token)
+                def on_int_thinking(token: str):
+                    asyncio.ensure_future(self.ws.send_llm_thinking(token))
+
+                main_success, main_error = await self.coder.update_main_integration(new_entry, on_token=on_int_token, on_thinking=on_int_thinking)
                 await self.ws.send_llm_done("".join(int_chunks))
 
                 if main_success:
@@ -535,7 +546,10 @@ class Orchestrator:
                 fix_chunks.append(token)
                 asyncio.ensure_future(self.ws.send_llm_token(token))
 
-            success, msg, fixed_files = await self.fixer.fix_error(target_file, current_error, on_token=on_fix_token)
+            def on_fix_thinking(token: str):
+                asyncio.ensure_future(self.ws.send_llm_thinking(token))
+
+            success, msg, fixed_files = await self.fixer.fix_error(target_file, current_error, on_token=on_fix_token, on_thinking=on_fix_thinking)
             await self.ws.send_llm_done("".join(fix_chunks))
 
             if not success:

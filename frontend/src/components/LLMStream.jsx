@@ -10,6 +10,11 @@ export default function LLMStream({ text, streaming }) {
     }
   }, [text]);
 
+  const renderText = (rawText) => {
+    if (!rawText) return null;
+    return rawText;
+  };
+
   return (
     <div className="llm-stream">
       <div className="llm-stream-header">
@@ -17,7 +22,7 @@ export default function LLMStream({ text, streaming }) {
           {streaming ? (
             <>
               <span className="typing-dot" />
-              AI is thinking...
+              AI is writing...
             </>
           ) : text ? (
             'AI Output'
@@ -27,8 +32,8 @@ export default function LLMStream({ text, streaming }) {
         </span>
       </div>
       <div className="llm-stream-body" ref={scrollRef}>
-        {text ? (
-          <pre className="llm-text">{text}{streaming && <span className="cursor-blink">▊</span>}</pre>
+        {text || streaming ? (
+          <pre className="llm-text">{renderText(text)}{streaming && <span className="cursor-blink">▊</span>}</pre>
         ) : (
           <div className="llm-empty">
             <p>AI output will appear here as code is being generated.</p>

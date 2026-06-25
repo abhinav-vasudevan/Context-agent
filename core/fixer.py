@@ -7,6 +7,7 @@ Cross-platform compatible (Windows + Linux).
 """
 
 from __future__ import annotations
+import difflib
 import logging
 import re
 from pathlib import Path
@@ -25,6 +26,55 @@ log = logging.getLogger(__name__)
 def _normalize_path(p: str) -> str:
     """Normalize path separators to forward slashes for cross-platform consistency."""
     return p.replace("\\", "/")
+
+
+def _strip_comments(text: str) -> str:
+    """Strip inline Python comments from each line for fuzzy comparison."""
+    lines = []
+    for line in text.splitlines():
+        # Remove inline comments but keep strings intact (simple heuristic)
+        stripped = re.sub(r'#[^"\']*$', '', line).rstrip()
+        lines.append(stripped)
+    return "\n".join(lines)
+
+
+def _fuzzy_find_in_content(search_text: str, content: str, threshold: float = 0.75) -> Optional[tuple]:
+    """
+    Find the best fuzzy match for search_text within content.
+    
+    Returns (start_idx, end_idx) of the best match in content, or None if
+    no match exceeds the threshold.
+    """
+    search_lines = search_text.splitlines()
+    content_lines = content.splitlines()
+    search_len = len(search_lines)
+    
+    if search_len == 0 or len(content_lines) == 0:
+        return None
+    
+    best_ratio = 0.0
+    best_start = -1
+    
+    # Slide a window of search_len lines over the content
+    for i in range(len(content_lines) - search_len + 1):
+        window = "\n".join(content_lines[i:i + search_len])
+        ratio = difflib.SequenceMatcher(None, search_text, window).ratio()
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_start = i
+    
+    if best_ratio >= threshold and best_start >= 0:
+        # Reconstruct the matched text from the actual content lines
+        matched_text = "\n".join(content_lines[best_start:best_start + search_len])
+        # Find the byte positions in the original content
+        start_pos = len("\n".join(content_lines[:best_start]))
+        if best_start > 0:
+            start_pos += 1  # account for the joining newline
+        end_pos = start_pos + len(matched_text)
+        log.debug("Fuzzy match found (ratio=%.2f) at lines %d-%d", best_ratio, best_start, best_start + search_len)
+        return (matched_text, best_ratio)
+    
+    return None
 
 
 class Fixer:
@@ -50,6 +100,7 @@ class Fixer:
         file_path: str,
         error_text: str,
         on_token=None,
+        on_thinking=None,
     ) -> Tuple[bool, str, list[str]]:
         """
         Attempt to fix a broken file (can optionally fix multiple files).
@@ -57,7 +108,8 @@ class Fixer:
         Args:
             file_path: The file that caused the error (if known)
             error_text: The stderr output or traceback
-            on_token: Optional callback for streaming tokens
+            on_token: Optional callback for streaming content tokens
+            on_thinking: Optional callback for streaming thinking tokens
 
         Returns:
             (success, message, list_of_modified_files)
@@ -67,13 +119,10 @@ class Fixer:
         # Determine which file to fix
         target_file = _normalize_path(file_path)
         if parsed_error["file"] and parsed_error["file"].endswith(".py"):
-            # The traceback might point to absolute path or workspace path
-            # Normalize all paths for cross-platform comparison
             trace_file = _normalize_path(parsed_error["file"])
             workspace_str = _normalize_path(str(self.workspace.resolve()))
 
             if workspace_str in trace_file:
-                # Extract relative path from absolute traceback path
                 target_file = trace_file.split(workspace_str)[-1].lstrip("/")
             elif "src/" in trace_file:
                 target_file = "src/" + trace_file.split("src/")[-1]
@@ -87,7 +136,6 @@ class Fixer:
         # 1. Handle ModuleNotFoundError automatically
         if parsed_error["is_import_error"] and parsed_error["missing_module"]:
             missing = parsed_error["missing_module"]
-            # Ignore internal modules
             if missing == "src" or missing.startswith("src.") or missing.startswith("src/"):
                 log.info("Fixer: ignoring missing internal module '%s'", missing)
                 return False, f"Cannot auto-install internal module '{missing}'. Does the file exist yet?", []
@@ -109,56 +157,28 @@ class Fixer:
             error_text=error_text,
         )
 
-        # 4. Agentic Loop
+        # 4. Agentic Loop with retry tracking
         max_iterations = 5
         current_prompt = ctx["prompt"]
         system_prompt = ctx["system"]
         fixed_files_list = []
         brief_plan = "Fixed bugs."
+        # Track SEARCH/REPLACE failures per file to escalate to full rewrite
+        search_fail_counts = {}
+        MAX_SEARCH_FAILURES = 3
         
         for iteration in range(max_iterations):
             log.info("Fixer: agent loop iteration %d/%d", iteration + 1, max_iterations)
             chunks = []
-            in_hidden_block = False
-            stream_buffer = ""
             
-            def filtered_on_token(token: str):
-                nonlocal in_hidden_block, stream_buffer
-                stream_buffer += token
-                
-                if not in_hidden_block:
-                    for tag in ("<think>", "<brief_plan>"):
-                        if tag in stream_buffer:
-                            in_hidden_block = True
-                            pre_tag = stream_buffer.split(tag)[0]
-                            if pre_tag and on_token:
-                                on_token(pre_tag)
-                            stream_buffer = stream_buffer.split(tag, 1)[1]
-                            break
-                    else:
-                        if len(stream_buffer) > 13:
-                            safe_str = stream_buffer[:-13]
-                            stream_buffer = stream_buffer[-13:]
-                            if on_token:
-                                on_token(safe_str)
-                                
-                if in_hidden_block:
-                    for tag in ("</think>", "</brief_plan>"):
-                        if tag in stream_buffer:
-                            in_hidden_block = False
-                            stream_buffer = stream_buffer.split(tag, 1)[1]
-                            break
-
             try:
                 async for chunk in self.llm.generate_stream(
                     prompt=current_prompt,
                     system=system_prompt,
-                    on_token=filtered_on_token if on_token else None,
+                    on_token=on_token,
+                    on_thinking=on_thinking,
                 ):
                     chunks.append(chunk)
-                
-                if not in_hidden_block and stream_buffer and on_token:
-                    on_token(stream_buffer)
             except Exception as e:
                 return False, f"LLM Generation Error: {str(e)}", []
                 
@@ -166,15 +186,21 @@ class Fixer:
             if not raw_output.strip():
                 return False, "LLM returned empty output", []
                 
-            # Extract brief plan for the history summary
-            plan_match = re.search(r'<brief_plan>(.*?)</brief_plan>', raw_output, re.DOTALL | re.IGNORECASE)
-            if plan_match:
-                brief_plan = plan_match.group(1).strip()
+            # Extract think block for summary (legacy format — still useful if /api/generate)
+            think_match = re.search(r'<think>(.*?)</think>', raw_output, re.DOTALL | re.IGNORECASE)
+            think_alt_match = re.search(r'Thinking\.\.\.(.*?)\.\.\.done thinking\.', raw_output, re.DOTALL | re.IGNORECASE)
+            if think_match:
+                think_text = think_match.group(1).strip()
+                brief_plan = think_text[-150:].replace('\n', ' ').strip()
+            elif think_alt_match:
+                think_text = think_alt_match.group(1).strip()
+                brief_plan = think_text[-150:].replace('\n', ' ').strip()
 
             # Append assistant's response to prompt history
             current_prompt += f"\n\nASSISTANT:\n{raw_output}\n\n"
             
             # Check for <view_file> tags
+            has_view_file = False
             view_matches = list(re.finditer(r'<view_file>\s*(.*?)\s*</view_file>', raw_output, re.IGNORECASE))
             if view_matches:
                 system_reply = "SYSTEM:\n"
@@ -189,8 +215,7 @@ class Fixer:
                         system_reply += f"--- {fpath} ---\nFILE NOT FOUND\n\n"
                 
                 current_prompt += system_reply
-                log.info("Fixer: agent requested to view files, continuing loop")
-                continue  # Loop back to let the LLM think again
+                has_view_file = True
                 
             # Parse edit blocks (both new <edit_file> and legacy # FILE: format)
             file_edits = {}
@@ -256,16 +281,18 @@ class Fixer:
                         code = match.group(2).strip()
                         file_edits[path] = [{"search": "FULL_FILE_REPLACE", "replace": code}]
                 else:
-                    # If there's no edit but there is a <done>, we just exit normally
                     if "<done>" in raw_output.lower():
                         break
+                        
+                    if has_view_file:
+                        log.info("Fixer: agent requested to view files, continuing loop")
+                        continue
                     
-                    # If we reached here, no valid tool was called. Send error to agent.
                     current_prompt += "SYSTEM:\nYou did not use <view_file>, <edit_file>, or <done>. Please output valid XML tags to proceed.\n\n"
                     log.info("Fixer: agent outputted invalid tags, looping back")
                     continue
                     
-            # Apply all fixes
+            # Apply all fixes with fuzzy matching and retry tracking
             edit_success = True
             for fpath, edits in file_edits.items():
                 fpath = _normalize_path(fpath)
@@ -287,15 +314,85 @@ class Fixer:
                     
                     if search_text == "FULL_FILE_REPLACE":
                         content = replace_text
-                    elif search_text not in content:
-                        if search_text.strip() in content:
-                            content = content.replace(search_text.strip(), replace_text.strip())
-                        else:
-                            current_prompt += f"SYSTEM:\nCould not find exact SEARCH block in {fpath}. Since SEARCH/REPLACE failed, on your next attempt, please output the ENTIRE rewritten file inside a ```python block as a fallback.\n\n"
-                            edit_success = False
-                            break
-                    else:
+                        log.info("Fixer: full file rewrite applied for %s", fpath)
+                        continue
+                    
+                    # === Multi-level matching strategy ===
+                    matched = False
+                    
+                    # Level 1: Exact match
+                    if search_text in content:
                         content = content.replace(search_text, replace_text, 1)
+                        matched = True
+                        log.info("Fixer: exact SEARCH match in %s", fpath)
+                    
+                    # Level 2: Stripped whitespace match
+                    if not matched and search_text.strip() in content:
+                        content = content.replace(search_text.strip(), replace_text.strip(), 1)
+                        matched = True
+                        log.info("Fixer: stripped whitespace SEARCH match in %s", fpath)
+                    
+                    # Level 3: Comment-stripped match
+                    if not matched:
+                        stripped_search = _strip_comments(search_text)
+                        stripped_content = _strip_comments(content)
+                        if stripped_search.strip() in stripped_content:
+                            # Find the matching region in the original content by line
+                            search_lines_clean = stripped_search.strip().splitlines()
+                            content_lines = content.splitlines()
+                            content_lines_clean = stripped_content.splitlines()
+                            
+                            for idx in range(len(content_lines_clean) - len(search_lines_clean) + 1):
+                                window = content_lines_clean[idx:idx + len(search_lines_clean)]
+                                if "\n".join(window) == stripped_search.strip():
+                                    # Replace original lines
+                                    original_match = "\n".join(content_lines[idx:idx + len(search_lines_clean)])
+                                    content = content.replace(original_match, replace_text, 1)
+                                    matched = True
+                                    log.info("Fixer: comment-stripped SEARCH match in %s (line %d)", fpath, idx)
+                                    break
+                    
+                    # Level 4: Fuzzy match using difflib
+                    if not matched:
+                        fuzzy_result = _fuzzy_find_in_content(search_text, content)
+                        if fuzzy_result:
+                            actual_text, ratio = fuzzy_result
+                            content = content.replace(actual_text, replace_text, 1)
+                            matched = True
+                            log.info("Fixer: fuzzy SEARCH match in %s (ratio=%.2f)", fpath, ratio)
+                    
+                    # If no match at any level — track failure
+                    if not matched:
+                        search_fail_counts[fpath] = search_fail_counts.get(fpath, 0) + 1
+                        fail_count = search_fail_counts[fpath]
+                        log.warning(
+                            "Fixer: SEARCH/REPLACE failed for %s (failure %d/%d)",
+                            fpath, fail_count, MAX_SEARCH_FAILURES
+                        )
+                        
+                        if fail_count >= MAX_SEARCH_FAILURES:
+                            # Escalate: demand full file rewrite
+                            current_prompt += (
+                                f"SYSTEM:\nSEARCH/REPLACE has failed {fail_count} times for {fpath}. "
+                                f"The SEARCH blocks do not match the actual file content (comments or whitespace differ). "
+                                f"You MUST now output the ENTIRE complete rewritten file for {fpath} inside a single ```python block. "
+                                f"Do NOT use SEARCH/REPLACE anymore for this file. "
+                                f"Use this format:\n"
+                                f"# FILE: {fpath}\n"
+                                f"```python\n"
+                                f"[entire file content here]\n"
+                                f"```\n\n"
+                            )
+                        else:
+                            current_prompt += (
+                                f"SYSTEM:\nCould not find SEARCH block in {fpath} "
+                                f"(failure {fail_count}/{MAX_SEARCH_FAILURES}). "
+                                f"The comments or whitespace in your SEARCH block don't match the actual file. "
+                                f"Please use <view_file>{fpath}</view_file> to see the exact content, "
+                                f"then retry with the exact text from the file.\n\n"
+                            )
+                        edit_success = False
+                        break
 
                 if edit_success:
                     # Save fixed file
@@ -303,6 +400,8 @@ class Fixer:
                     log.info("Fixer: applied edit to %s", fpath)
                     if fpath not in fixed_files_list:
                         fixed_files_list.append(fpath)
+                        
+                    current_prompt += f"SYSTEM:\nSuccessfully applied edits to {fpath}.\n\n"
                     
                     # Syntax check
                     if fpath.endswith(".py"):
@@ -319,11 +418,14 @@ class Fixer:
                         
             if not edit_success:
                 log.info("Fixer: edit failed or syntax error, looping back")
-                continue # Loop back so LLM can fix its mistake
+                continue
                 
             # If edits succeeded and it output <done>, break
             if "<done>" in raw_output.lower():
                 break
+            else:
+                log.info("Fixer: edits succeeded but no <done> found, looping back")
+                continue
                 
         # 8. Record in fix history
         self.state.fix_history.append({

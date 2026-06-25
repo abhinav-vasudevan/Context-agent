@@ -1,0 +1,107 @@
+.thinking-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.thinking-panel-header {
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border-subtle);
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(59, 130, 246, 0.06));
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.thinking-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #a78bfa;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.thinking-dot {
+  width: 6px;
+  height: 6px;
+  background: #a78bfa;
+  border-radius: 50%;
+  animation: thinking-pulse 1.5s ease-in-out infinite;
+  box-shadow: 0 0 6px rgba(167, 139, 250, 0.5);
+}
+
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+.thinking-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-md);
+  min-height: 300px;
+  background: #0a0a0f;
+}
+
+.thinking-text {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.8;
+  color: #9ca3af;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  border-left: 2px solid rgba(139, 92, 246, 0.3);
+  padding-left: var(--space-md);
+  margin: 0;
+}
+
+.thinking-text .step-number {
+  color: #a78bfa;
+  font-weight: 600;
+}
+
+.thinking-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 200px;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  gap: var(--space-sm);
+}
+
+.thinking-empty .thinking-icon {
+  font-size: 1.5rem;
+  opacity: 0.5;
+}
+
+.thinking-cursor {
+  color: #a78bfa;
+  animation: typewriter-blink 0.8s infinite;
+}
+
+.thinking-panel-body::-webkit-scrollbar {
+  width: 4px;
+}
+
+.thinking-panel-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thinking-panel-body::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.3);
+  border-radius: 2px;
+}
+
+.thinking-panel-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 92, 246, 0.5);
+}

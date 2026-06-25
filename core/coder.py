@@ -34,13 +34,15 @@ class Coder:
         self,
         step: PlanStep,
         on_token=None,
+        on_thinking=None,
     ) -> Tuple[bool, Optional[str]]:
         """
         Generate code for a single plan step.
         
         Args:
             step: The PlanStep to execute
-            on_token: Optional callback for streaming tokens
+            on_token: Optional callback for streaming content tokens
+            on_thinking: Optional callback for streaming thinking tokens
             
         Returns:
             (success, error_message)
@@ -50,52 +52,16 @@ class Coder:
         # 1. Build prompt
         ctx = self.assembler.build_coder_prompt(step)
 
-        # 2. Call LLM — filter out <think>/<brief_plan> blocks from the UI stream
+        # 2. Call LLM
         chunks = []
-        in_hidden_block = False
-        stream_buffer = ""
-        
-        def filtered_on_token(token: str):
-            nonlocal in_hidden_block, stream_buffer
-            stream_buffer += token
-            
-            # Check for opening tags
-            if not in_hidden_block:
-                for tag in ("<think>", "<brief_plan>"):
-                    if tag in stream_buffer:
-                        in_hidden_block = True
-                        pre_tag = stream_buffer.split(tag)[0]
-                        if pre_tag and on_token:
-                            on_token(pre_tag)
-                        stream_buffer = stream_buffer.split(tag, 1)[1]
-                        break
-                else:
-                    # Flush safe buffer (keep last 13 chars in case a tag is forming)
-                    if len(stream_buffer) > 13:
-                        safe_str = stream_buffer[:-13]
-                        stream_buffer = stream_buffer[-13:]
-                        if on_token:
-                            on_token(safe_str)
-                            
-            # Check for closing tags
-            if in_hidden_block:
-                for tag in ("</think>", "</brief_plan>"):
-                    if tag in stream_buffer:
-                        in_hidden_block = False
-                        stream_buffer = stream_buffer.split(tag, 1)[1]
-                        break
-        
         try:
             async for chunk in self.llm.generate_stream(
                 prompt=ctx["prompt"],
                 system=ctx["system"],
-                on_token=filtered_on_token if on_token else None,
+                on_token=on_token,
+                on_thinking=on_thinking,
             ):
                 chunks.append(chunk)
-            
-            # Flush remaining buffer
-            if not in_hidden_block and stream_buffer and on_token:
-                on_token(stream_buffer)
                 
         except Exception as e:
             return False, f"LLM Generation Error: {str(e)}"
@@ -149,6 +115,7 @@ class Coder:
         self,
         new_file_entry: FileEntry,
         on_token=None,
+        on_thinking=None,
     ) -> Tuple[bool, Optional[str]]:
         """
         Update main.py to import and use a newly created module.
@@ -169,6 +136,7 @@ class Coder:
             prompt=ctx["prompt"],
             system=ctx["system"],
             on_token=on_token,
+            on_thinking=on_thinking,
         ):
             chunks.append(chunk)
 
@@ -209,8 +177,10 @@ class Coder:
         Extract clean code from LLM output.
         Removes markdown fences and surrounding prose unless it's a markdown file.
         """
-        # Strip <think> and <brief_plan> blocks if present, even if unclosed
-        raw_output = re.sub(r'<(?:think|brief_plan)>.*?(?:</(?:think|brief_plan)>|\Z)', '', raw_output, flags=re.DOTALL | re.IGNORECASE).strip()
+        # Strip <think> blocks if present, even if unclosed
+        raw_output = re.sub(r'<think>.*?(?:</think>|\Z)', '', raw_output, flags=re.DOTALL | re.IGNORECASE).strip()
+        # Also strip Ollama CLI format if the model natively outputs it
+        raw_output = re.sub(r'Thinking\.\.\..*?(?:\.\.\.done thinking\.|\Z)', '', raw_output, flags=re.DOTALL | re.IGNORECASE).strip()
 
         if file_path.endswith(".md") or file_path.endswith(".txt"):
             match = re.search(r'^```(?:markdown|md|text)?\s*\n(.*?)(?:```|\Z)', raw_output.strip(), re.DOTALL | re.IGNORECASE)
@@ -257,8 +227,10 @@ class Coder:
         """Generate a concrete 1-sentence summary of the code."""
         ctx = self.assembler.build_summary_prompt(file_path, code)
         summary = await self.llm.generate(prompt=ctx["prompt"], system=ctx["system"])
-        # Strip any <think>/<brief_plan> blocks that reasoning models inject
-        summary = re.sub(r'<(?:think|brief_plan)>.*?</(?:think|brief_plan)>', '', summary, flags=re.DOTALL)
-        summary = re.sub(r'<(?:think|brief_plan)>.*$', '', summary, flags=re.DOTALL)
+        # Strip any <think> blocks that reasoning models inject
+        summary = re.sub(r'<think>.*?</think>', '', summary, flags=re.DOTALL)
+        summary = re.sub(r'<think>.*$', '', summary, flags=re.DOTALL)
+        summary = re.sub(r'Thinking\.\.\..*?\.\.\.done thinking\.', '', summary, flags=re.DOTALL)
+        summary = re.sub(r'Thinking\.\.\..*$', '', summary, flags=re.DOTALL)
         # Clean up any surrounding quotes or extra text
         return summary.strip(' \n"\'')

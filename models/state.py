@@ -113,6 +113,7 @@ class ProjectState:
 
     # Input
     original_prompt: str = ""
+    architecture_text: str = ""                # raw architecture.md content
 
     # Plan
     plan_text: str = ""                        # raw plan.txt content

@@ -62,3 +62,11 @@
   color: var(--text-muted);
   font-size: 0.88rem;
 }
+
+.llm-think {
+  color: #888888;
+  font-style: italic;
+  border-left: 2px solid #555555;
+  padding-left: var(--space-sm);
+  margin-left: 2px;
+}

@@ -5,9 +5,10 @@ import PlanPanel from '../components/PlanPanel';
 import CodeViewer from '../components/CodeViewer';
 import OutputPanel from '../components/OutputPanel';
 import LLMStream from '../components/LLMStream';
+import ThinkingPanel from '../components/ThinkingPanel';
 import PermissionModal from '../components/PermissionModal';
 import InputModal from '../components/InputModal';
-import { ArrowLeft, Play, Send, Cpu, FileCode, Terminal, Brain, FolderTree, Square } from 'lucide-react';
+import { ArrowLeft, Play, Send, Cpu, FileCode, Terminal, Brain, Lightbulb, FolderTree, Square } from 'lucide-react';
 import './Workspace.css';
 
 export default function Workspace({ projectData, onBack }) {
@@ -23,6 +24,10 @@ export default function Workspace({ projectData, onBack }) {
   // LLM stream
   const [llmText, setLlmText] = useState('');
   const [llmStreaming, setLlmStreaming] = useState(false);
+
+  // Thinking stream
+  const [thinkingText, setThinkingText] = useState('');
+  const [isThinking, setIsThinking] = useState(false);
 
   // Process output
   const [processOutput, setProcessOutput] = useState([]);
@@ -59,16 +64,25 @@ export default function Workspace({ projectData, onBack }) {
   const ws = useWebSocket({
     llm_token: (data) => {
       setLlmStreaming(true);
+      setIsThinking(false);
       setLlmText(prev => prev + data.token);
-      // Only auto-switch to AI Output on the FIRST token of a new generation
-      // AND only if the user hasn't manually picked a different tab
+      // Auto-switch from think to llm tab when content starts
       if (!userSelectedPanelRef.current && llmTextRef.current === '') {
         setActivePanel('llm');
       }
       llmTextRef.current += data.token;
     },
+    llm_thinking: (data) => {
+      setIsThinking(true);
+      setThinkingText(prev => prev + data.token);
+      // Auto-switch to think tab on first thinking token
+      if (!userSelectedPanelRef.current) {
+        setActivePanel('think');
+      }
+    },
     llm_done: (data) => {
       setLlmStreaming(false);
+      setIsThinking(false);
     },
     process_stdout: (data) => {
       setProcessOutput(prev => {
@@ -120,9 +134,12 @@ export default function Workspace({ projectData, onBack }) {
       if (data.status === 'generating' || data.status === 'fixing' || data.status === 'planning') {
         // New generation starting — reset the "user selected" flag and llm text
         setLlmText('');
+        setThinkingText('');
         setLlmStreaming(true);
+        setIsThinking(false);
         userSelectedPanelRef.current = false;
         llmTextRef.current = '';
+        setActivePanel('think'); // Start on Think tab since thinking comes first
       }
       if (data.status === 'running') {
         setProcessRunning(true);
@@ -214,6 +231,10 @@ export default function Workspace({ projectData, onBack }) {
   async function handleGeneratePlan() {
     if (!prompt.trim()) return;
     setLlmText('');
+    setStatus('planning');
+    setActivePanel('llm');
+    userSelectedPanelRef.current = false;
+    llmTextRef.current = '';
     try {
       await api.generatePlan(prompt);
     } catch (err) {
@@ -401,8 +422,8 @@ export default function Workspace({ projectData, onBack }) {
         </div>
       )}
 
-      {/* Action Bar (shown when plan exists) */}
-      {planSteps.length > 0 && (
+      {/* Action Bar (shown when plan exists or planning) */}
+      {(planSteps.length > 0 || status === 'planning') && (
         <div className="action-bar">
           {status === 'plan_review' && (
             <button className="btn btn-success" onClick={handleApprovePlan} id="approve-plan-btn">
@@ -431,12 +452,16 @@ export default function Workspace({ projectData, onBack }) {
       )}
 
       {/* Main Panels */}
-      {planSteps.length > 0 && (
+      {(planSteps.length > 0 || status === 'planning') && (
         <div className="workspace-body">
           {/* Panel Tabs */}
           <nav className="panel-tabs">
             <button className={`tab ${activePanel === 'plan' ? 'active' : ''}`} onClick={() => handleUserTabClick('plan')} id="tab-plan">
               <FolderTree size={16} /> Plan
+            </button>
+            <button className={`tab ${activePanel === 'think' ? 'active' : ''}`} onClick={() => handleUserTabClick('think')} id="tab-think">
+              <Lightbulb size={16} /> Think
+              {isThinking && <span className="tab-pulse purple" />}
             </button>
             <button className={`tab ${activePanel === 'llm' ? 'active' : ''}`} onClick={() => handleUserTabClick('llm')} id="tab-llm">
               <Brain size={16} /> AI Output
@@ -460,6 +485,9 @@ export default function Workspace({ projectData, onBack }) {
                 onFileSelect={loadFileContent}
                 planText={project?.plan_text || llmText}
               />
+            )}
+            {activePanel === 'think' && (
+              <ThinkingPanel text={thinkingText} isThinking={isThinking} />
             )}
             {activePanel === 'llm' && (
               <LLMStream text={llmText} streaming={llmStreaming} />
@@ -486,7 +514,7 @@ export default function Workspace({ projectData, onBack }) {
       )}
 
       {/* Manual Error Fix / Followup — always visible so user can paste errors anytime */}
-      {planSteps.length > 0 && (
+      {(planSteps.length > 0 || status === 'planning') && (
         <div className="followup-section">
           <div className="followup-card glass-panel">
             <h3>Need to fix an error or add a feature?</h3>

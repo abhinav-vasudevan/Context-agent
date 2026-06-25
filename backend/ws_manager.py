@@ -65,9 +65,16 @@ class ConnectionManager:
     # ── Convenience broadcast methods ─────────────────────────────────
 
     async def send_llm_token(self, token: str):
-        """Broadcast a single LLM token to all clients."""
+        """Broadcast a single LLM content token to all clients."""
         await self.broadcast({
             "type": "llm_token",
+            "data": {"token": token},
+        })
+
+    async def send_llm_thinking(self, token: str):
+        """Broadcast a single LLM thinking/reasoning token to all clients."""
+        await self.broadcast({
+            "type": "llm_thinking",
             "data": {"token": token},
         })
 

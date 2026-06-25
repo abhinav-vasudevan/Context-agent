@@ -31,73 +31,70 @@ class Planner:
         self.state = state
         self.assembler = ContextAssembler(state)
 
-    async def generate_plan(
+    async def generate_architecture(
         self,
         user_prompt: str,
         on_token=None,
+        on_thinking=None,
     ) -> str:
         """
-        Generate a plan from the user's prompt.
+        Phase 1: Generate a deep architectural blueprint from the user prompt.
+        """
+        log.info("Planner: generating architecture for prompt (len=%d)", len(user_prompt))
+
+        ctx = self.assembler.build_architect_prompt(user_prompt)
+
+        chunks = []
+        try:
+            async for chunk in self.llm.generate_stream(
+                prompt=ctx["prompt"],
+                system=ctx["system"],
+                on_token=on_token,
+                on_thinking=on_thinking,
+            ):
+                chunks.append(chunk)
+        except Exception as e:
+            log.error("Planner architecture generation failed: %s", e)
+            raise ValueError(f"Architect failed to generate from the API: {str(e)}")
+
+        arch_text = "".join(chunks)
+        log.info("Planner: architecture generated (len=%d)", len(arch_text))
+        return arch_text
+
+    async def generate_plan(
+        self,
+        user_prompt: str,
+        architecture_text: str,
+        on_token=None,
+        on_thinking=None,
+    ) -> str:
+        """
+        Phase 2: Generate a plan from the user's prompt and architectural blueprint.
         
         Args:
             user_prompt: The user's project description
+            architecture_text: The deeply reasoned architecture.md text
             on_token: Optional callback for streaming tokens to UI
+            on_thinking: Optional callback for streaming thinking tokens to UI
             
         Returns:
             The raw plan text
         """
         log.info("Planner: generating plan for prompt (len=%d)", len(user_prompt))
 
-        ctx = self.assembler.build_planner_prompt(user_prompt)
+        ctx = self.assembler.build_planner_prompt(user_prompt, architecture_text)
 
         # Stream the plan generation so user sees it being built
         chunks = []
-        in_hidden_block = False
-        buffer = ""
         
         try:
-            # We intercept on_token to hide <think>/<brief_plan> blocks from the UI
-            def filtered_on_token(token: str):
-                nonlocal in_hidden_block, buffer
-                buffer += token
-                
-                # Check for opening tags
-                if not in_hidden_block:
-                    for tag in ("<think>", "<brief_plan>"):
-                        if tag in buffer:
-                            in_hidden_block = True
-                            # Flush text before the tag
-                            pre_tag = buffer.split(tag)[0]
-                            if pre_tag and on_token:
-                                on_token(pre_tag)
-                            buffer = buffer.split(tag, 1)[1]
-                            break
-                    else:
-                        # Flush safe buffer (keep last 13 chars in case a tag is forming)
-                        if len(buffer) > 13:
-                            safe_str = buffer[:-13]
-                            buffer = buffer[-13:]
-                            if on_token:
-                                on_token(safe_str)
-                                
-                # Check for closing tags
-                if in_hidden_block:
-                    for tag in ("</think>", "</brief_plan>"):
-                        if tag in buffer:
-                            in_hidden_block = False
-                            buffer = buffer.split(tag, 1)[1]
-                            break
-
             async for chunk in self.llm.generate_stream(
                 prompt=ctx["prompt"],
                 system=ctx["system"],
-                on_token=filtered_on_token if on_token else None,
+                on_token=on_token,
+                on_thinking=on_thinking,
             ):
                 chunks.append(chunk)
-                
-            # Flush remaining buffer
-            if not in_hidden_block and buffer and on_token:
-                on_token(buffer)
                 
         except Exception as e:
             log.error("Planner generation failed: %s", e)
@@ -105,10 +102,14 @@ class Planner:
 
         plan_text = "".join(chunks)
         
-        # Remove any <think>/<brief_plan> blocks from the final plan string so the parser doesn't see them
-        plan_text = re.sub(r'<(?:think|brief_plan)>.*?</(?:think|brief_plan)>', '', plan_text, flags=re.DOTALL)
+        # Remove any <think> blocks from the final plan string so the parser doesn't see them
+        plan_text = re.sub(r'<think>.*?</think>', '', plan_text, flags=re.DOTALL)
         # Also strip unclosed blocks (model hit token limit mid-think)
-        plan_text = re.sub(r'<(?:think|brief_plan)>.*$', '', plan_text, flags=re.DOTALL)
+        plan_text = re.sub(r'<think>.*$', '', plan_text, flags=re.DOTALL)
+        
+        # Support Ollama alternative output formats
+        plan_text = re.sub(r'Thinking\.\.\..*?\.\.\.done thinking\.', '', plan_text, flags=re.DOTALL)
+        plan_text = re.sub(r'Thinking\.\.\..*$', '', plan_text, flags=re.DOTALL)
         
         log.info("Planner: plan generated (len=%d)", len(plan_text))
 

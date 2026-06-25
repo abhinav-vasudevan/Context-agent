@@ -136,17 +136,19 @@ class LLMClient:
         prompt: str,
         system: str = "",
         on_token: Optional[Callable[[str], None]] = None,
+        on_thinking: Optional[Callable[[str], None]] = None,
         stop: Optional[list[str]] = None,
     ) -> AsyncIterator[str]:
         """
         Stream tokens from Ollama as they arrive.
-        Yields individual text chunks.
+        Yields individual text chunks (content only, not thinking).
         Includes retry logic with exponential backoff.
 
         Args:
             prompt: The user/task prompt
             system: System prompt (instructions)
-            on_token: Optional sync callback for each token (for UI updates)
+            on_token: Optional sync callback for each content token (for UI updates)
+            on_thinking: Optional sync callback for each thinking token (for UI updates)
             stop: Optional list of stop sequences
         """
         last_error = None
@@ -154,7 +156,7 @@ class LLMClient:
         attempt = 0
         while True:
             try:
-                async for token in self._do_stream(prompt, system, on_token, stop, max_tokens_override=current_max_tokens):
+                async for token in self._do_stream(prompt, system, on_token, on_thinking, stop, max_tokens_override=current_max_tokens):
                     yield token
                 return  # Success — exit retry loop
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as e:
@@ -254,6 +256,7 @@ class LLMClient:
         prompt: str,
         system: str,
         on_token: Optional[Callable[[str], None]],
+        on_thinking: Optional[Callable[[str], None]] = None,
         stop: Optional[list[str]] = None,
         max_tokens_override: Optional[int] = None,
     ) -> AsyncIterator[str]:
@@ -328,8 +331,6 @@ class LLMClient:
                                     if choices:
                                         finish_reason = choices[0].get("finish_reason")
                                         if finish_reason == "length":
-                                            # Don't raise — partial output is already yielded to the caller.
-                                            # Just log a warning and stop reading.
                                             log.warning("LLM output truncated by token limit (finish_reason='length'). Partial output will be used.")
                                             break
                                             
@@ -338,12 +339,14 @@ class LLMClient:
                                         
                                         # Handle reasoning tokens from advanced models (DeepSeek, Qwen reasoning, etc)
                                         reasoning = delta.get("reasoning", "") or delta.get("reasoning_content", "") or delta.get("thought", "")
-                                        if reasoning and not token:
-                                            # We will just yield reasoning tokens as content so the parser can see them
-                                            token = reasoning
+                                        if reasoning:
+                                            if on_thinking:
+                                                on_thinking(reasoning)
+                                            if not token:
+                                                # Don't yield reasoning as content
+                                                continue
                                         
                                         if not token and delta and "role" not in delta and "tool_calls" not in delta:
-                                            # Log strange deltas so we can debug models like groq/compound
                                             if not self._logged_delta:
                                                 log.warning("Unknown delta format from model %s: %s", self.model, delta)
                                                 self._logged_delta = True
@@ -381,10 +384,8 @@ class LLMClient:
             )
             start_time = time.monotonic()
             
-            # Count tokens via Gemini API
             prompt_tokens = 0
             try:
-                # Approximate or use genai API
                 prompt_tokens = self.count_tokens(prompt + system)
             except Exception:
                 pass
@@ -431,7 +432,12 @@ class LLMClient:
                 raise RuntimeError(err_msg) from e
             return
 
-        # Ollama implementation
+        # ── Ollama implementation — uses /api/chat with think:true ──
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
         options = {
             "num_ctx": self.num_ctx,
             "temperature": self.temperature,
@@ -445,12 +451,11 @@ class LLMClient:
 
         payload = {
             "model": self.model,
-            "prompt": prompt,
+            "messages": messages,
             "stream": True,
+            "think": True,
             "options": options,
         }
-        if system:
-            payload["system"] = system
 
         log.info(
             "LLM request (Ollama): model=%s, prompt_len=%d, system_len=%d",
@@ -463,7 +468,7 @@ class LLMClient:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 async with client.stream(
                     "POST",
-                    f"{self.base_url}/api/generate",
+                    f"{self.base_url}/api/chat",
                     json=payload,
                 ) as resp:
                     try:
@@ -476,11 +481,22 @@ class LLMClient:
                             continue
                         try:
                             data = json.loads(line)
-                            token = data.get("response", "")
-                            if token:
+                            msg = data.get("message", {})
+                            
+                            # Handle thinking tokens (separate field from content)
+                            thinking_token = msg.get("thinking", "")
+                            if thinking_token:
+                                if on_thinking:
+                                    on_thinking(thinking_token)
+                                # Don't yield thinking as content
+                            
+                            # Handle content tokens
+                            content_token = msg.get("content", "")
+                            if content_token:
                                 if on_token:
-                                    on_token(token)
-                                yield token
+                                    on_token(content_token)
+                                yield content_token
+                            
                             if data.get("done", False):
                                 self.total_calls += 1
                                 prompt_tokens = data.get("prompt_eval_count", 0)

@@ -291,11 +291,14 @@ class QAAgent:
             )
 
         system = (
-            "You are a QA tester interacting with a CLI application. "
-            "The program is asking for input. Based on the context, "
-            "provide a single, realistic, valid test input value. "
-            "Respond with ONLY the input value — no explanation, no quotes, "
-            "no formatting. Just the raw value to type."
+            "You are a human user testing a newly built CLI application. "
+            "The program is asking for input. Based on the context and the program's original purpose, "
+            "provide a single, realistic, valid test input value that a human user would type. "
+            "CRITICAL RULES:\n"
+            "1. NEVER echo back the program's output. You are the user, NOT the agent.\n"
+            "2. If the application is an AI agent, chatbot, or code assistant, act like a human developer talking to it. Provide realistic coding prompts (e.g. 'write a python function to sort a list').\n"
+            "3. If the application is stuck in a loop asking the same thing over and over, provide an exit command like 'exit', 'quit', or 'Ctrl+C'.\n"
+            "Respond with ONLY the raw input value to type — no quotes, no formatting, no explanations."
         )
 
         prompt = (
