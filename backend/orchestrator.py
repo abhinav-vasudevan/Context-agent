@@ -778,14 +778,14 @@ class Orchestrator:
             return None
 
     def list_workspace_files(self) -> list:
-        """List all files in the workspace (excluding venv)."""
+        """List all files in the workspace (excluding venv and internal brain)."""
         if not self.workspace_dir:
             return []
         files = []
         for item in self.workspace_dir.rglob("*"):
             if item.is_file():
                 rel = item.relative_to(self.workspace_dir).as_posix()
-                if rel.startswith("venv/") or "__pycache__" in rel:
+                if rel.startswith("venv/") or "__pycache__" in rel or rel.startswith(".agent_brain/"):
                     continue
                 files.append(rel)
         return sorted(files)

@@ -33,6 +33,8 @@ log = logging.getLogger(__name__)
 class LLMClient:
     """Async wrapper for the Ollama /api/generate endpoint or Google Gemini API."""
 
+    _thinking_unsupported_models = set()
+
     def __init__(
         self,
         base_url: str = config.OLLAMA_BASE_URL,
@@ -171,6 +173,9 @@ class LLMClient:
                     attempt += 1
                 else:
                     log.error("LLM network request failed after %d attempts: %s", config.OLLAMA_MAX_RETRIES, repr(e))
+                    if isinstance(e, httpx.ConnectError) and not getattr(self, 'use_groq', False) and not getattr(self, 'use_gemini', False):
+                        err_msg = f"Cannot connect to Ollama at {self.base_url}. Make sure Ollama is running (run 'ollama serve' in a terminal)."
+                        raise RuntimeError(err_msg)
                     raise
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 413:
@@ -195,7 +200,7 @@ class LLMClient:
                             )
                             continue
                         log.error("HTTP 413 Payload Too Large and prompt is already small (%d tokens). Cannot recover.", prompt_tokens)
-                        raise
+                        raise RuntimeError(f"HTTP 413 Payload Too Large and prompt is already small ({prompt_tokens} tokens). Cannot recover.")
                 elif e.response.status_code == 429 or e.response.status_code >= 500:
                     last_error = e
                     # For 429s, allow up to 10 attempts since rate limits (e.g. Tokens per Minute) can take 60s to clear.
@@ -217,10 +222,22 @@ class LLMClient:
                         attempt += 1
                     else:
                         log.error("LLM HTTP error failed after %d attempts: %s", max_attempts, repr(e))
-                        raise
+                        err_msg = f"Ollama Error ({e.response.status_code}). Details: {e.response.text}"
+                        raise RuntimeError(err_msg) from e
                 else:
                     # Non-retryable HTTP error (e.g. 400 Bad Request, 404 Not Found)
-                    raise
+                    if e.response.status_code == 400 and "does not support thinking" in e.response.text:
+                        log.warning("Model %s does not support thinking. Disabling thinking and retrying...", self.model)
+                        self.__class__._thinking_unsupported_models.add(self.model)
+                        continue
+                        
+                    err_msg = f"Ollama Error ({e.response.status_code}). "
+                    if e.response.status_code == 404:
+                        err_msg += f"Model '{self.model}' not found. Please run 'ollama run {self.model}' in a terminal to download it."
+                    else:
+                        err_msg += f"Details: {e.response.text}"
+                    log.error("LLM streaming failed: %s", err_msg)
+                    raise RuntimeError(err_msg) from e
             except ValueError as e:
                 # If the stream itself returned a JSON error indicating Payload Too Large
                 if "Too Large" in str(e):
@@ -453,9 +470,11 @@ class LLMClient:
             "model": self.model,
             "messages": messages,
             "stream": True,
-            "think": True,
             "options": options,
         }
+        
+        if self.model not in self.__class__._thinking_unsupported_models:
+            payload["think"] = True
 
         log.info(
             "LLM request (Ollama): model=%s, prompt_len=%d, system_len=%d",
@@ -512,30 +531,9 @@ class LLMClient:
                         except json.JSONDecodeError:
                             continue
 
-        except httpx.HTTPStatusError as e:
-            err_msg = f"Ollama Error ({e.response.status_code}). "
-            if e.response.status_code == 500:
-                err_msg += (
-                    "This usually means your computer ran out of RAM. "
-                    "Try restarting Ollama or freeing up memory."
-                )
-            elif e.response.status_code == 404:
-                err_msg += (
-                    f"Model '{self.model}' not found. "
-                    f"Please run 'ollama run {self.model}' in a terminal to download it."
-                )
-            else:
-                err_msg += f"Details: {e.response.text}"
-            log.error("LLM streaming failed: %s", err_msg)
-            raise RuntimeError(err_msg) from e
-
-        except httpx.ConnectError:
-            err_msg = (
-                f"Cannot connect to Ollama at {self.base_url}. "
-                "Make sure Ollama is running (run 'ollama serve' in a terminal)."
-            )
-            log.error(err_msg)
-            raise RuntimeError(err_msg)
+        except Exception as e:
+            # Let generate_stream handle the errors and retries
+            raise
 
     # ── Health check ──────────────────────────────────────────────────
 
