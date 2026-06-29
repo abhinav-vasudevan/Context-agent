@@ -1,146 +1,171 @@
-# Context Agent: Advanced Agentic Coding System
+# Context Agent V2 — Autonomous Software Engineering Operating System
 
-Welcome to **Context Agent**! Instead of relying on complex, non-deterministic Multi-Agent DAGs (Directed Acyclic Graphs) that easily lose context or hallucinate "code stitching," this system relies on a **Deterministic Single-Loop Orchestrator** powered by strict AST (Abstract Syntax Tree) parsing.
+**Context Agent V2** is not just a chatbot, a coding assistant, or a simple code generator. It is an **Autonomous Software Engineering Operating System** designed to solve the fundamental context-window limitations of Large Language Models (LLMs). By utilizing a persistent external "Project Brain" and a hierarchical planning cascade, it enables the autonomous development, maintenance, modification, testing, refactoring, and evolution of software systems of arbitrary size.
 
-This README is designed to explain the internal mechanics of the system from prompt to execution.
-
----
-
-## 🏗️ 1. System Architecture Overview
-
-The system is split into a robust **Python FastAPI Backend** and a clean **React Vite Frontend**, communicating in real-time via WebSockets and REST APIs.
-
-When a user submits a prompt, it doesn't just go to a chatbot. It enters the **Orchestrator Pipeline**:
-
-1. **Planning Phase**: The prompt is analyzed and a strictly structured implementation plan is generated.
-2. **Execution Phase**: The system iterates through the plan file-by-file.
-3. **Context Assembly**: Instead of dumping the entire codebase into the LLM (which destroys the context window), the system generates an "AST File Registry" containing only the exact function signatures and class definitions of previously written files.
-4. **Verification & Auto-Fixing**: Code is executed in an isolated sandbox. Syntax and runtime errors are caught, fed back to the LLM, and fixed autonomously.
+This system is built to:
+* Build production-ready applications from a single prompt.
+* Work with codebases containing tens of thousands of files without hitting token limits.
+* Maintain architectural understanding across months or years of development.
+* Enforce security, linting, integration, and syntax correctness autonomously.
 
 ---
 
-## 🧠 2. How the Prompt is Broken Down & Planned
+## 🏗️ The 8-Layer Cognitive Architecture
 
-When you ask the system to "Build a Scientific Calculator," here is exactly what happens under the hood:
+Context Agent V2 operates on an 8-layer architecture that separates reasoning, memory, execution, and verification into distinct cognitive sub-systems.
 
-### A. The Planner Agent
-The user's prompt is routed to the **Planner**. The Planner does not write code. Its sole job is to break down the user's intent into a strictly formatted Markdown plan (`plan.txt`).
+### LAYER 1: Orchestration Layer (`backend/orchestrator.py`)
+The central nervous system. It drives the entire workflow, managing the state transitions from planning to execution, handling WebSocket communication with the frontend UI, and coordinating all other layers. It runs a deterministic loop, moving step-by-step and triggering auto-fix mechanisms if anything fails.
 
-### B. The Dependency Graph
-The LLM generates the plan by listing files in **dependency order** (e.g., `utils.py` is planned before `main.py` because `main` depends on `utils`). 
+### LAYER 2: Planning Layer (`core/planners/`)
+A hierarchical cascade that prevents the LLM from getting overwhelmed by massive requests. It scales dynamically based on the complexity of the user's prompt.
+* **Master Planner**: Decomposes a user prompt into a high-level **System Vision**. It identifies massive architectural blocks (Subsystems).
+* **Architecture Planner**: Defines the boundaries, constraints, and dependencies of those Subsystems. It also generates **Architectural Decision Records (ADRs)**.
+* **Domain Planner**: Breaks Subsystems down into concrete logical Services.
+* **Module Planner**: Breaks Services down into precise, individual file-level Modules with exact function signatures and exports.
 
-### C. Parsing the Plan
-Our Python backend intercepts the LLM's raw text and uses a custom `parse_plan()` function to extract the exact file paths and their descriptions. It creates a stateful `ProjectState` tracking which files are `PENDING`, `IN_PROGRESS`, or `COMPLETED`.
+### LAYER 3: Project Brain Layer (`core/brain/`)
+The long-term persistent memory of the system. LLMs are stateless; the Project Brain is stateful. It consists of:
+* **Knowledge Graph (Neo4j)**: Stores the structural relationships. It maps Nodes (Subsystems, Services, Files, Functions) via Edges (`OWNS`, `USES`, `DEPENDS_ON`, `IMPLEMENTS`). It allows the agent to answer questions like: *"If I change this database model, what UI components break?"*
+* **Semantic Store (ChromaDB)**: Stores the meaning behind the code. It holds semantic summaries of every generated file and architectural decision, enabling fuzzy similarity searches (e.g., *"Find files that handle user authentication"*).
+* **AST Registry**: A deterministic cache of actual Python file signatures (classes, functions, imports) parsed using the built-in `ast` module.
+
+### LAYER 4: Context Retrieval Layer (`core/retrieval/context_engine.py`)
+Replaces the naive "stuff everything into the prompt" approach. The Context Engine fuses Graph, Semantic, and AST data to build a highly focused, minimal context payload for the LLM. For any given file being generated, it dynamically fetches:
+1. The overall Architecture Overview.
+2. The owning Subsystem's constraints.
+3. The exact AST signatures of direct dependencies.
+4. Semantically similar files within a 2-hop radius.
+5. Relevant Architectural Decision Records.
+
+### LAYER 5: Engineering Layer (`core/coder.py`, `core/agents/`)
+The layer responsible for actually writing and understanding code.
+* **Coder**: Translates a plan step and the precise Context Engine payload into raw, runnable Python code. It is strictly forbidden from using placeholders (`# ...`).
+* **Summarizer Agent**: A post-commit hook. After a file is written, it reads the raw code and extracts its semantic meaning, constraints, and risks, pushing this data back into the Project Brain (ChromaDB).
+* **Integration Agent**: A pre-commit hook. Before a file is finalized, this agent verifies that the newly generated code correctly interfaces with the existing codebase (checking method signatures, async mismatches, etc.).
+
+### LAYER 6: Verification Layer (`core/verification/`, `core/qa_agent.py`, `core/fixer.py`)
+Ensures the system doesn't commit broken code.
+* **Static Analyzer**: Uses deterministic tools (like Python's `ast` module) to catch syntax errors instantly before they reach runtime.
+* **Architecture Validator**: Parses imports to ensure generated code doesn't violate the boundaries established in the Neo4j Knowledge Graph (e.g., catching if a UI file tries to directly import a database model instead of using an API layer).
+* **QA Agent**: An autonomous testing agent that launches the generated application and uses the LLM to provide interactive inputs (stdin/stdout) exactly as a human tester would, hunting for runtime bugs.
+* **Fixer**: The debugging loop. If any layer (Syntax, Integration, QA, or Execution) throws an error, the Fixer reads the traceback, isolates the buggy file, and issues targeted rewrite commands.
+
+### LAYER 7: Knowledge Evolution Layer
+Integrated within the Project Brain, this layer handles updates. As the codebase changes, the Knowledge Graph is dynamically updated with new edges, and ChromaDB is updated with new semantic summaries.
+
+### LAYER 8: Execution Layer (`core/runner.py`)
+The sandboxed runtime environment.
+* **Sandboxing**: Runs all generated code inside an isolated Python virtual environment (`venv`).
+* **Security Checker**: Scans commands against a strict blocklist (`rm`, `sudo`, `chmod`, `mv`, etc.) and enforces workspace-jail boundaries to prevent the AI from harming the host machine.
+* **Dependency Management**: Autonomously parses and installs missing pip packages (with user permission).
 
 ---
 
-## ⚙️ 3. Repeated LLM Calling (The Single Loop)
+## ⚙️ The Full Execution Flow
 
-Once the plan is approved by the user, the **Builder Agent** takes over. It does not try to build the whole app in one prompt. It uses a **Repeated Iteration Loop**.
+When a user submits a prompt, the system executes the following NHIL (No-Human-In-The-Loop) pipeline:
 
-For every file in the plan:
-1. **Context Construction**: The backend builds a highly optimized prompt. It injects:
-   - The user's original goal.
-   - The specific instructions for *this exact file*.
-   - The **File Registry** (more on this below).
-2. **LLM Invocation**: The LLM is called (via local `qwen:14b` or Gemini). The generation is streamed live to the UI via WebSockets.
-3. **Extraction**: The raw Markdown output is parsed, and the raw Python/JS code is extracted and written directly to the secure Workspace sandbox.
+1. **Vision & Architecture Planning**: 
+   The `MasterPlanner` converts the prompt into an `ArchitectureSpec` containing Subsystems, Services, Modules, and ADRs.
+2. **Brain Ingestion**:
+   The entire architecture is pushed into the Neo4j Knowledge Graph and ChromaDB Semantic Store.
+3. **Execution Flattening**:
+   The hierarchical architecture is flattened into sequential `PlanStep` objects.
+4. **Iterative Generation Loop** (For each step):
+   * **Context Retrieval**: The `ContextEngine` fetches the exact subgraph and semantic data needed for this specific file.
+   * **Code Generation**: The `Coder` writes the file.
+   * **Syntax Check**: The `StaticAnalyzer` verifies the code won't crash on import.
+   * **Integration Check**: The `IntegrationAgent` ensures it uses other internal modules correctly.
+   * **Architecture Check**: The `ArchitectureValidator` ensures it doesn't cross forbidden subsystem boundaries.
+   * **Summarization**: The `SummarizerAgent` reads the file and updates the Project Brain.
+   * *(If any check fails, the `Fixer` automatically kicks in to resolve it).*
+5. **Dependency Installation**:
+   The system identifies `requirements.txt` and requests user permission to install dependencies into the sandboxed venv.
+6. **QA Testing**:
+   The `QAAgent` boots up `main.py` and interacts with it, verifying the final integrated product.
 
 ---
 
-## 📂 4. The "Secret Weapon": The Concrete AST File Registry
+## 🤖 Completely Automatic Auto-Fixing (No-Human-In-The-Loop)
 
-The biggest problem with AI coding is **Code Stitching**—the LLM forgets the exact name of a function it wrote 5 minutes ago and invents a new one, breaking the app.
+You do **not** need to hold the agent's hand. The system is designed to be completely automatic, fighting through errors on its own until it delivers a finished, working project to you.
 
-We solved this using Python's `ast` (Abstract Syntax Tree) module. 
-Instead of sending raw code back to the LLM (which eats up tokens), our system:
-1. Parses every `.py` file the LLM writes.
-2. Extracts exactly the `class` names, `def` signatures, and `import` statements.
-3. Compiles them into a lightweight "Registry."
+If an error occurs at **any point** in the pipeline, the system automatically intercepts it and fixes it:
+* **Syntax Error?** The `StaticAnalyzer` catches it before runtime, sends the error trace to the `Fixer`, and the code is rewritten.
+* **Missing Package?** If a runtime `ModuleNotFoundError` is thrown, the system parses the error, automatically runs `pip install <module>`, and re-runs the code.
+* **Integration Mismatch?** If `main.py` calls a function with the wrong arguments, the `IntegrationAgent` detects the interface mismatch, and the `Coder` corrects it.
+* **Runtime Crash during testing?** The `QAAgent` captures the full traceback and `stderr`, isolates exactly which file caused the crash, and triggers the `Fixer` loop.
 
-**Example of what the LLM sees:**
-```python
-# Available Files in Workspace:
-# src/math_ops.py
-def add(a: float, b: float) -> float: ...
-def subtract(a: float, b: float) -> float: ...
+The orchestrator will loop through these fixes automatically (up to a configured `MAX_FIX_ATTEMPTS`). As a user, you submit your prompt, step away, and return to a **fully tested, debugged, and functioning application**.
+
+---
+
+## 🔒 Security Protocols
+
+Context Agent V2 operates with high autonomy, which necessitates strict security:
+* **No Root Access**: The agent cannot execute `sudo`.
+* **Restricted Commands**: The `SecurityChecker` blocks destructive commands (`rm`, `chmod`, `chown`, `mkfs`, `dd`).
+* **Workspace Isolation**: All execution (`cwd`) is hard-locked to the project's specific directory within `projects/`. Path traversal (`../`) is blocked.
+* **Virtual Environments**: Every project gets its own isolated `venv` to prevent polluting the host's Python installation.
+* **Explicit Permission**: The system will *always* prompt the user via the UI before executing `pip install` on third-party requirements or booting up long-running tests.
+
+---
+
+## 📂 Data Models & State Tracking (`models/hierarchy.py`, `models/state.py`)
+
+The system's state is fully JSON-serializable, allowing execution to be paused, resumed, or recovered after a crash.
+
+* **ProjectState**: The massive God-object that tracks everything: the original prompt, the generated architecture, the flattened plan steps, the completion status of each step, LLM token usage metrics, and paths to the Project Brain databases.
+* **ArchitectureSpec**: The root of the hierarchy. Contains `SubsystemSpec` objects and `ArchitectureDecisionRecord` (ADR) objects.
+* **SubsystemSpec**: A major system block (e.g., "Networking"). Contains `ServiceSpec` objects.
+* **ServiceSpec**: A logical grouping of functionality. Contains `ModuleSpec` objects.
+* **ModuleSpec**: A concrete representation of a single file to be written.
+
+---
+
+## 🚀 Setup & Installation
+
+### 1. Prerequisites
+You must have the following installed on your host machine:
+* Python 3.10+
+* [Neo4j Desktop](https://neo4j.com/download/) (or run via Docker: `docker run -p 7687:7687 neo4j`)
+
+### 2. Environment Variables
+Ensure your `.env` or system environment contains:
+```env
+# Database Connections
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=password
+NEO4J_DATABASE=neo4j
+
+# LLM Providers (Choose one or multiple)
+USE_GROQ=True
+GROQ_API_KEY=your_groq_key
+GROQ_MODEL=llama-3.3-70b-versatile
+
+USE_GEMINI=False
+GEMINI_API_KEY=your_gemini_key
+
+# Ollama Fallback (Local)
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3
 ```
-This guarantees the LLM knows *exactly* how to call functions it previously wrote, ensuring perfect code stitching every time while saving massive amounts of token bandwidth.
+
+### 3. Install Dependencies
+```bash
+pip install -r requirements.txt
+```
+*(Dependencies include `fastapi`, `uvicorn`, `httpx`, `neo4j`, `chromadb`, `pydantic`, `rich`, `websockets`)*
+
+### 4. Run the Backend
+Start the FastAPI orchestration server:
+```bash
+python -m backend.server
+```
+The backend will launch on `http://127.0.0.1:8000` and open a WebSocket connection for the frontend UI.
 
 ---
 
-## 🛠️ 5. Automated Fixing Loop (Self-Healing Code)
-
-We do not trust the LLM to write perfect code on the first try. The Context Agent features an autonomous **Verification & Fixing Loop**.
-
-1. **Immediate Syntax Check**: The moment a Python file is written, the system runs `python -m py_compile <file>`. 
-2. **Error Capture**: If the LLM made an indentation error or syntax mistake, the command fails. The Orchestrator captures the `stderr` traceback.
-3. **The Fix Prompt**: The backend automatically constructs a new prompt:
-   *"You wrote this code: [Code]. It threw this error: [Traceback]. Fix it."*
-4. **Retry Loop**: The LLM generates a new version. This loop repeats up to `MAX_FIX_ATTEMPTS` times without any user intervention.
-5. **Runtime Fixing**: Beyond syntax, the system can spin up a background task to actually *run* the user's project. If the project crashes at runtime, the exact stack trace is captured and fed back into the fixing loop.
-
----
-
-## 🔒 6. Security and Sandboxing
-
-Because the agent executes code automatically, security is paramount.
-- **Venv Isolation**: Every project gets its own isolated `venv` (Virtual Environment). Dependencies are installed here, keeping your host system perfectly clean.
-- **Command Blocklist**: Destructive commands (`rm -rf`, `sudo`, `mkfs`) are hard-blocked by the Python orchestrator before they ever reach the shell.
-- **Explicit Permission**: You are the supervisor. The agent cannot run the application without asking for your explicit `[y/n]` permission in the UI.
-
----
-
-## 🚀 7. Running the System
-
-To see the system in action:
-
-1. Ensure Ollama is running (`ollama serve`) with the `qwen:14b` model pulled.
-2. Run the startup script:
-   ```bash
-   ./start.sh
-   ```
-3. The FastAPI Backend will boot on `http://127.0.0.1:8088`.
-4. The React Vite Frontend will boot on `http://localhost:5174`.
-5. Open the UI, type your prompt, and watch the Orchestrator plan, generate, and self-heal your application in real-time!
-
----
-
-## 🗂️ 8. Directory & File Structure Deep Dive
-
-Here is exactly what every file and folder does in the Context Agent ecosystem:
-
-### `backend/`
-The FastAPI server bridging the UI with the core agent logic.
-- **`server.py`**: The main entry point for the backend. Defines the REST API routes (like `/api/health` and `/api/projects`) and mounts the WebSocket endpoints.
-- **`orchestrator.py`**: The "Central Nervous System". It manages the state machine, triggers the Planner and Coder, and orchestrates the execution and self-healing loops.
-- **`ws_manager.py`**: Manages active WebSocket connections to stream live LLM tokens and execution status updates directly to the React frontend.
-
-### `core/`
-The brain of the operation, containing all the agentic LLM logic.
-- **`coder.py`**: Responsible for parsing the raw LLM responses, extracting the markdown code blocks, and securely writing them to the file system.
-- **`context.py`**: The AST Context Engine. It uses Python's Abstract Syntax Tree parser to read previously generated files and build a highly condensed, concrete "File Registry" of function signatures to feed into the prompt.
-- **`fixer.py`**: The Self-Healing module. It analyzes stack traces and tracebacks from failed executions, auto-installs missing Python packages, and builds the specific fix prompts for the LLM.
-- **`llm_client.py`**: A robust, async wrapper around LLM APIs (Ollama, Groq, Gemini). It handles token estimation, Server-Sent Events (SSE) streaming, and exponential backoff for network resilience.
-- **`planner.py`**: Analyzes the user's initial prompt and uses the LLM to generate a strict, dependency-ordered implementation plan.
-- **`runner.py`**: The secure sandbox engine. It executes syntax checks (`py_compile`), manages the virtual environments (`venv`), and handles the execution of the generated user programs in non-interactive modes.
-
-### `models/`
-- **`state.py`**: Contains the Pydantic data schemas for `ProjectState`, `PlanStep`, and `FileEntry`. This ensures type safety as state is passed between the Planner, Orchestrator, and Frontend.
-
-### `frontend/`
-The React (Vite) User Interface.
-- Provides a stunning UI with a `Dashboard.jsx` to manage multiple project workspaces, and a `Workspace.jsx` screen that offers a live file explorer, syntax-highlighted code viewer, and real-time terminal logs.
-
-### `ui/`
-- **`terminal_ui.py`**: A rich command-line user interface (using the `rich` library) allowing developers to use the entire Context Agent from their terminal instead of the web UI.
-
-### `projects/`
-The isolated sandbox directory where all user applications are generated. Each project gets its own sub-folder with a completely isolated Python `venv` to prevent dependency conflicts on your host machine.
-
-### Root Files
-- **`cli.py`**: The Command Line Interface entry point (run via `python cli.py`).
-- **`config.py`**: The centralized configuration hub. Stores all tunable parameters, token budgets, API keys (Groq, Gemini), and LLM configurations.
-- **`main.py`**: A secondary/legacy entry point.
-- **`knowledge.json`**: The agent's persistent memory. It stores specific integration guidelines and "gotchas" to help the LLM avoid common coding mistakes.
-- **`start.sh` / `start.bat`**: Cross-platform bootstrapping scripts that concurrently spin up both the FastAPI backend and the React frontend.
+*Context Agent V2: Built to solve the context window, scale infinitely, and engineer autonomously.*

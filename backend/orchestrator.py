@@ -4,6 +4,9 @@ Orchestrator — class-based orchestrator that can be driven by both CLI and Web
 Replaces the old procedural main.py with a stateful class that uses callbacks
 for all user interactions. This means the same orchestrator works with both
 the terminal UI and the FastAPI web backend.
+
+Updated for Context Agent v2 (8-Layer Cognitive Architecture) with Project Brain,
+Hierarchical Planning, and Engineering Agents.
 """
 
 from __future__ import annotations
@@ -16,11 +19,15 @@ from typing import Optional
 
 import config
 from core.llm_client import LLMClient
-from core.planner import Planner
+from core.planners.master_planner import MasterPlanner
 from core.coder import Coder
 from core.runner import Runner, ErrorParser
 from core.fixer import Fixer
 from core.context import SmartChunker
+from core.brain.project_brain import ProjectBrain
+from core.retrieval.context_engine import ContextEngine
+from core.agents.integration_agent import IntegrationAgent
+from core.agents.summarizer import SummarizerAgent
 from models.state import ProjectState, StepStatus, PlanStep
 from backend.ws_manager import ConnectionManager
 
@@ -43,10 +50,17 @@ class Orchestrator:
         self.ws = ws_manager
         self.state: Optional[ProjectState] = None
         self.llm: Optional[LLMClient] = None
-        self.planner: Optional[Planner] = None
+        self.master_planner: Optional[MasterPlanner] = None
         self.coder: Optional[Coder] = None
         self.runner: Optional[Runner] = None
         self.fixer: Optional[Fixer] = None
+        
+        # V2 specific
+        self.brain: Optional[ProjectBrain] = None
+        self.context_engine: Optional[ContextEngine] = None
+        self.integration_agent: Optional[IntegrationAgent] = None
+        self.summarizer: Optional[SummarizerAgent] = None
+        
         self.workspace_dir: Optional[Path] = None
 
         # Permission handling via async events
@@ -102,10 +116,17 @@ class Orchestrator:
         venv_path = Path(self.state.venv_path) if self.state.venv_path else None
         self.runner = Runner(self.workspace_dir, venv_path=venv_path)
 
+        # Initialize V2 subsystems
+        self.brain = ProjectBrain(self.workspace_dir)
+        self.state.brain_path = str(self.brain.brain_dir)
+        self.context_engine = ContextEngine(self.brain, self.state)
+        
         # Initialize agents
-        self.planner = Planner(self.llm, self.state)
+        self.master_planner = MasterPlanner(self.llm)
         self.coder = Coder(self.llm, self.state, self.workspace_dir)
         self.fixer = Fixer(self.llm, self.state, self.workspace_dir, self.runner, self.coder)
+        self.integration_agent = IntegrationAgent(self.llm, self.brain)
+        self.summarizer = SummarizerAgent(self.llm)
 
         self.state.status = "idle"
         self.state.save(self.workspace_dir / "project_state.json")
@@ -129,9 +150,16 @@ class Orchestrator:
         self.llm = LLMClient()
         venv_path = Path(self.state.venv_path) if self.state.venv_path else None
         self.runner = Runner(self.workspace_dir, venv_path=venv_path)
-        self.planner = Planner(self.llm, self.state)
+        
+        # Re-initialize V2 subsystems
+        self.brain = ProjectBrain(self.workspace_dir)
+        self.context_engine = ContextEngine(self.brain, self.state)
+        
+        self.master_planner = MasterPlanner(self.llm)
         self.coder = Coder(self.llm, self.state, self.workspace_dir)
         self.fixer = Fixer(self.llm, self.state, self.workspace_dir, self.runner, self.coder)
+        self.integration_agent = IntegrationAgent(self.llm, self.brain)
+        self.summarizer = SummarizerAgent(self.llm)
 
         await self.ws.send_status("ready", f"Project '{self.state.project_name}' loaded")
         return {"success": True, "project": self.state.to_api_dict()}
@@ -139,8 +167,8 @@ class Orchestrator:
     # ── Planning ──────────────────────────────────────────────────────
 
     async def generate_plan(self, prompt: str = "") -> dict:
-        """Generate the implementation plan from the prompt."""
-        if not self.state or not self.planner:
+        """Generate the implementation plan using V2 Hierarchical Planning."""
+        if not self.state or not self.master_planner:
             return {"success": False, "error": "No project loaded"}
 
         if prompt:
@@ -149,74 +177,71 @@ class Orchestrator:
         if not self.state.original_prompt:
             return {"success": False, "error": "No prompt provided"}
 
-        # Phase 1: Architecture Blueprint
-        self.state.status = "architecting"
-        await self.ws.send_status("planning", "Designing system architecture...")
-
-        # Chunking check
         planning_prompt = self.state.original_prompt
         if SmartChunker.needs_chunking(planning_prompt):
             chunks = SmartChunker.chunk(planning_prompt)
             planning_prompt = chunks[0] + "\n\n[Prompt truncated for planning...]"
 
-        # Stream architecture generation
+        # Phase 1: Architecture Vision (Subsystems)
+        self.state.status = "architecting"
+        await self.ws.send_status("planning", "Stage 1: Generating System Vision and Subsystems...")
+
         arch_chunks = []
         def on_arch_token(token: str):
             arch_chunks.append(token)
             asyncio.ensure_future(self.ws.send_llm_token(token))
-
         def on_arch_thinking(token: str):
             asyncio.ensure_future(self.ws.send_llm_thinking(token))
 
         try:
-            arch_text = await self.planner.generate_architecture(planning_prompt, on_token=on_arch_token, on_thinking=on_arch_thinking)
-            await self.ws.send_llm_done(arch_text)
-            
-            # Save architecture
-            arch_path = self.workspace_dir / "architecture.md"
-            arch_path.write_text(arch_text, encoding="utf-8")
-            self.state.architecture_text = arch_text
-            self.state.save(self.workspace_dir / "project_state.json")
-            
+            arch_spec = await self.master_planner.generate_vision(planning_prompt, on_token=on_arch_token, on_thinking=on_arch_thinking)
+            await self.ws.send_llm_done("".join(arch_chunks))
         except Exception as e:
             err_msg = str(e)
-            if hasattr(e, 'response'):
-                err_msg = f"API Error: HTTP {e.response.status_code} - The selected model may not exist or is unavailable."
-            await self.ws.send_error(err_msg)
+            await self.ws.send_error(f"Vision Generation Error: {err_msg}")
             self.state.status = "failed"
             return {"success": False, "error": err_msg}
 
-        # Phase 2: Plan Generation
+        # Phase 2: Services and Modules Definition
         self.state.status = "planning"
-        await self.ws.send_status("planning", "Generating implementation plan...")
-
-        # Stream plan generation
-        llm_chunks = []
-        def on_token(token: str):
-            llm_chunks.append(token)
+        await self.ws.send_status("planning", "Stage 2: Decomposing into Services and Modules...")
+        
+        svc_chunks = []
+        def on_svc_token(token: str):
+            svc_chunks.append(token)
             asyncio.ensure_future(self.ws.send_llm_token(token))
-
-        def on_thinking(token: str):
+        def on_svc_thinking(token: str):
             asyncio.ensure_future(self.ws.send_llm_thinking(token))
 
         try:
-            plan_text = await self.planner.generate_plan(planning_prompt, self.state.architecture_text, on_token=on_token, on_thinking=on_thinking)
-            await self.ws.send_llm_done(plan_text)
+            arch_spec = await self.master_planner.generate_services(arch_spec, planning_prompt, on_token=on_svc_token, on_thinking=on_svc_thinking)
+            await self.ws.send_llm_done("".join(svc_chunks))
         except Exception as e:
             err_msg = str(e)
-            if hasattr(e, 'response'):
-                err_msg = f"API Error: HTTP {e.response.status_code} - The selected model may not exist or is unavailable."
-            await self.ws.send_error(err_msg)
+            await self.ws.send_error(f"Service Generation Error: {err_msg}")
             self.state.status = "failed"
             return {"success": False, "error": err_msg}
 
-        # Save plan
+        # Ingest the full architecture into the Project Brain (Graph + Semantic)
+        await self.ws.send_status("planning", "Stage 3: Ingesting Architecture into Project Brain...")
+        self.brain.ingest_architecture(arch_spec, self.state.project_name)
+        
+        # Save architecture text for display
+        self.state.architecture_text = self.master_planner.format_vision_for_display(arch_spec)
+        arch_path = self.workspace_dir / "architecture.md"
+        arch_path.write_text(self.state.architecture_text, encoding="utf-8")
+        
+        # Convert hierarchical spec to linear steps for execution
+        self.state.plan_steps = self.master_planner.flatten_to_plan_steps(arch_spec)
+        
+        # Generate simple plan_text string for backward compatibility with frontend
+        plan_lines = []
+        for s in self.state.plan_steps:
+            plan_lines.append(f"Step {s.step_number}: {s.title}\nFILE: {s.file_path}\nDESCRIPTION: {s.description}\n")
+        self.state.plan_text = "\n".join(plan_lines)
         plan_path = self.workspace_dir / "plan.txt"
-        plan_path.write_text(plan_text, encoding="utf-8")
-        self.state.plan_text = plan_text
+        plan_path.write_text(self.state.plan_text, encoding="utf-8")
 
-        # Parse plan
-        self.state.plan_steps = self.planner.parse_plan(plan_text)
         self.state.status = "plan_review"
         self.state.save(self.workspace_dir / "project_state.json")
 
@@ -233,7 +258,7 @@ class Orchestrator:
             for s in self.state.plan_steps
         ]
         await self.ws.send_plan_update(plan_data)
-        await self.ws.send_status("plan_review", "Plan generated. Review and approve to begin execution.")
+        await self.ws.send_status("plan_review", "Hierarchical Plan generated. Review and approve to begin execution.")
 
         return {"success": True, "plan_steps": plan_data}
 
@@ -271,7 +296,7 @@ class Orchestrator:
 
         try:
             # ── Phase 1: Write ALL files ──────────────────────────────
-            await self.ws.send_status("executing", "Phase 1: Generating all files...")
+            await self.ws.send_status("executing", "Phase 1: Generating all files using V2 Brain Context...")
             for i, step in enumerate(self.state.plan_steps):
                 if self._cancel_requested:
                     await self.ws.send_status("cancelled", "Execution cancelled by user")
@@ -392,12 +417,15 @@ class Orchestrator:
 
     async def _execute_step(self, step: PlanStep) -> dict:
         """
-        Execute a single plan step: generate the file and save it.
-        No execution, no pip installs, no permission prompts.
+        Execute a single plan step using V2 Context Engine.
         """
         await self.ws.send_step_update(step.step_number, "in_progress", f"Working on {step.title}...")
         step.status = StepStatus.IN_PROGRESS
         self.state.save(self.workspace_dir / "project_state.json")
+
+        # ── V2: Context Assembly ──
+        await self.ws.send_status("generating", f"Retrieving Brain context for {step.file_path}...")
+        context_text = self.context_engine.build_context_for_file(step.file_path, step.description)
 
         # ── Code Generation ──
         await self.ws.send_status("generating", f"Writing {step.file_path}...")
@@ -406,11 +434,11 @@ class Orchestrator:
         def on_token(token: str):
             llm_chunks.append(token)
             asyncio.ensure_future(self.ws.send_llm_token(token))
-
         def on_thinking(token: str):
             asyncio.ensure_future(self.ws.send_llm_thinking(token))
 
-        success, error = await self.coder.generate_code(step, on_token=on_token, on_thinking=on_thinking)
+        # We pass context_text directly using the new v2 code generator
+        success, error = await self.coder.generate_code_v2(step, context_text, on_token=on_token, on_thinking=on_thinking)
         full_output = "".join(llm_chunks)
         await self.ws.send_llm_done(full_output)
 
@@ -428,11 +456,38 @@ class Orchestrator:
             else:
                 return {"success": False, "error": error}
 
-        # Send file content to frontend
         file_path = self.workspace_dir / step.file_path
         if file_path.exists():
-            content = file_path.read_text(encoding="utf-8")
-            await self.ws.send_file_update(step.file_path, content)
+            code_content = file_path.read_text(encoding="utf-8")
+            
+            # ── V2: Integration Verification ──
+            if step.file_path.endswith(".py") and step.file_path != "main.py":
+                await self.ws.send_status("integrating", f"Verifying {step.file_path} integration...")
+                is_integrated, instructions = await self.integration_agent.verify_integration(step.file_path, code_content)
+                if not is_integrated:
+                    await self.ws.send_status("fixing", f"Integration issues found in {step.file_path}. Auto-fixing...")
+                    fixed = await self._auto_fix(step.file_path, instructions, verify_execution=False)
+                    if fixed:
+                        code_content = file_path.read_text(encoding="utf-8")
+                    else:
+                        await self.ws.send_error("Failed to fix integration issues.", step.file_path)
+
+            # ── V2: Summarization & Storage ──
+            if step.file_path.endswith(".py"):
+                await self.ws.send_status("verifying", f"Summarizing {step.file_path} for Project Brain...")
+                summary = await self.summarizer.summarize_file(step.file_path, code_content)
+                if summary:
+                    self.brain.store_file_summary(summary)
+            
+            await self.ws.send_file_update(step.file_path, code_content)
+            
+            # ── V1: AST Registry fallback (for bridging) ──
+            # We still add to the old file registry so the fixer and fallback contexts work
+            from core.context import FileRegistryBuilder
+            entry = FileRegistryBuilder.build_entry(step.file_path, code_content)
+            if entry:
+                self.state.file_registry = [e for e in self.state.file_registry if e.path != step.file_path]
+                self.state.file_registry.append(entry)
 
         # ── Main.py Integration (for src/ files) ──
         if step.file_path.startswith("src/") and step.file_path.endswith(".py"):
@@ -440,11 +495,9 @@ class Orchestrator:
             new_entry = next((e for e in self.state.file_registry if e.path == step.file_path), None)
             if new_entry:
                 int_chunks = []
-
                 def on_int_token(token: str):
                     int_chunks.append(token)
                     asyncio.ensure_future(self.ws.send_llm_token(token))
-
                 def on_int_thinking(token: str):
                     asyncio.ensure_future(self.ws.send_llm_thinking(token))
 
@@ -473,7 +526,7 @@ class Orchestrator:
         """
         from core.qa_agent import QAAgent
 
-        qa = QAAgent(self.llm, self.original_prompt)
+        qa = QAAgent(self.llm, self.state.original_prompt)
         python_cmd = self.runner._get_python_cmd()
         main_file = str(self.workspace_dir / "main.py")
 
@@ -541,11 +594,9 @@ class Orchestrator:
             await self.ws.send_status("fixing", f"Fix attempt {attempts}/{config.MAX_FIX_ATTEMPTS} on {target_file}...")
 
             fix_chunks = []
-
             def on_fix_token(token: str):
                 fix_chunks.append(token)
                 asyncio.ensure_future(self.ws.send_llm_token(token))
-
             def on_fix_thinking(token: str):
                 asyncio.ensure_future(self.ws.send_llm_thinking(token))
 
@@ -617,67 +668,44 @@ class Orchestrator:
 
         await self.ws.send_status("fixing", "Analyzing user feedback...")
         
-        # Resolve the target file from the pasted text
         target_file = self._resolve_target_file(text)
-        
         await self.ws.send_status("fixing", f"Targeting {target_file} for fix...")
 
-        # Trigger auto-fix loop WITH verification so fixes are actually tested
         fixed = await self._auto_fix(target_file, f"User Feedback/Error:\n{text}", verify_execution=True)
         
         if fixed:
             await self.ws.send_status("fixed", f"Successfully fixed {target_file}!")
             self.state.status = "fixed"
         else:
-            self.state.status = "completed"  # Revert to completed on failure
+            self.state.status = "completed"
             
         self.state.save(self.workspace_dir / "project_state.json")
         return {"success": True}
 
     def _resolve_target_file(self, text: str) -> str:
-        """
-        Resolve the target file from user-pasted error text.
-        
-        Strategy:
-        1. Extract all File "..." paths from the traceback
-        2. Try to resolve them relative to the workspace
-        3. If only a basename is found, search the workspace
-        4. Fall back to main.py as last resort
-        """
+        """Resolve the target file from user-pasted error text."""
         workspace_path = self.workspace_dir.resolve()
         
-        # Extract all File "..." references from the text
         file_matches = re.findall(r'File "([^"]+)"', text)
-        
         if file_matches:
-            # Walk in reverse (last file in traceback is closest to the error)
             for match in reversed(file_matches):
                 try:
                     match_path = Path(match).resolve()
-                    # Check if this file is inside our workspace
                     if match_path.is_relative_to(workspace_path):
                         rel_path = match_path.relative_to(workspace_path).as_posix()
-                        # Verify the file actually exists in workspace
                         if (self.workspace_dir / rel_path).exists():
-                            log.info("Manual fix: resolved target file from traceback: %s", rel_path)
                             return rel_path
                 except Exception:
                     pass
-            
-            # If no workspace-relative path found, try basename search
             for match in reversed(file_matches):
                 basename = Path(match).name
-                # Search workspace for this file
                 found = self._find_file_in_workspace(basename)
                 if found:
-                    log.info("Manual fix: resolved target file by basename search: %s", found)
                     return found
         
-        # Try ErrorParser for structured error info
         error_info = ErrorParser.parse_traceback(text)
         if error_info.get("file"):
             error_file = error_info["file"]
-            # Try to resolve relative to workspace
             try:
                 err_path = Path(error_file).resolve()
                 if err_path.is_relative_to(workspace_path):
@@ -686,12 +714,10 @@ class Orchestrator:
                         return rel_path
             except Exception:
                 pass
-            # Try basename search
             found = self._find_file_in_workspace(Path(error_file).name)
             if found:
                 return found
         
-        # Last resort: default to main.py
         log.warning("Manual fix: could not resolve target file, defaulting to main.py")
         return "main.py"
 
@@ -700,7 +726,6 @@ class Orchestrator:
         for item in self.workspace_dir.rglob(filename):
             if item.is_file():
                 rel = item.relative_to(self.workspace_dir).as_posix()
-                # Skip venv and __pycache__
                 if rel.startswith("venv/") or "__pycache__" in rel:
                     continue
                 return rel
@@ -710,7 +735,6 @@ class Orchestrator:
 
     async def _request_input(self) -> str:
         """Called by Runner when process hangs on stdin."""
-        # The user NEVER wants human input. Automate the response to avoid hanging.
         log.info("Process asked for input during testing. Supplying automated 'exit' command to prevent blocking.")
         return "exit"
 
@@ -735,7 +759,8 @@ class Orchestrator:
     async def cancel_execution(self) -> dict:
         """Cancel the current execution."""
         self._cancel_requested = True
-        await self.runner.kill_process()
+        if self.runner:
+            await self.runner.kill_process()
         return {"success": True}
 
     # ── File Operations ───────────────────────────────────────────────
@@ -760,7 +785,6 @@ class Orchestrator:
         for item in self.workspace_dir.rglob("*"):
             if item.is_file():
                 rel = item.relative_to(self.workspace_dir).as_posix()
-                # Skip venv and __pycache__
                 if rel.startswith("venv/") or "__pycache__" in rel:
                     continue
                 files.append(rel)

@@ -145,6 +145,10 @@ class ProjectState:
     # Workspace path (set after project directory is created)
     workspace_path: str = ""
     venv_path: str = ""
+    
+    # V2 Project Brain Tracking
+    brain_path: str = ""                       # path to .agent_brain directory
+    hierarchy_spec_path: str = ""              # path to architecture_spec.json
 
     def increment_llm_calls(self, tokens: int = 0):
         """Track LLM usage."""

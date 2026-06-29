@@ -30,6 +30,72 @@ class Coder:
         # Temporary runner just for syntax checking
         self._syntax_runner = Runner(workspace)
 
+    async def generate_code_v2(
+        self,
+        step: PlanStep,
+        context_text: str,
+        on_token=None,
+        on_thinking=None,
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Generate code for a single plan step using V2 context.
+        
+        Args:
+            step: The PlanStep to execute
+            context_text: The focused context built by ContextEngine
+            on_token: Optional callback for streaming content tokens
+            on_thinking: Optional callback for streaming thinking tokens
+            
+        Returns:
+            (success, error_message)
+        """
+        log.info("Coder: generating code for step %d (%s) using V2 context", step.step_number, step.file_path)
+
+        system_prompt = "You are an elite Software Engineer. You must output the entire file content. Never use placeholders like '# ...'."
+        prompt = f"TASK:\n{step.description}\n\nFILE PATH:\n{step.file_path}\n\nCONTEXT:\n{context_text}\n\nWrite the complete, runnable Python code now."
+
+        chunks = []
+        try:
+            async for chunk in self.llm.generate_stream(
+                prompt=prompt,
+                system=system_prompt,
+                on_token=on_token,
+                on_thinking=on_thinking,
+            ):
+                chunks.append(chunk)
+        except Exception as e:
+            return False, f"LLM Generation Error: {str(e)}"
+
+        raw_output = "".join(chunks)
+        
+        if not raw_output.strip():
+            return False, "LLM returned empty output"
+
+        code = self._extract_code(raw_output, step.file_path)
+
+        if "# ..." in code or "# existing" in code.lower() or "# ... existing" in code.lower():
+            return False, "LLM returned a placeholder snippet. You MUST output the ENTIRE file without using '# ...' placeholders."
+
+        file_path = self.workspace / step.file_path
+        
+        if not step.file_path or step.file_path.endswith("/") or file_path.is_dir() or file_path == self.workspace:
+            file_path.mkdir(parents=True, exist_ok=True)
+            step.summary = f"Created directory {step.file_path}"
+            return True, None
+            
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(code, encoding="utf-8")
+        
+        log.info("Coder: saved file %s (%d bytes)", step.file_path, len(code))
+
+        if step.file_path.endswith(".py"):
+            syntax_result = await self._syntax_runner.syntax_check(step.file_path)
+            if not syntax_result.success:
+                log.warning("Coder: Syntax error in generated code: %s", syntax_result.error)
+                return False, f"Syntax Error:\n{syntax_result.error}"
+
+        return True, None
+
     async def generate_code(
         self,
         step: PlanStep,
