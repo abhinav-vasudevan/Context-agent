@@ -483,7 +483,7 @@ Output ONLY the one-sentence summary, nothing else."""
             try:
                 # Query Neo4j for files connected to this step's file
                 query = f"""
-                MATCH (f:File)-[:CONTAINS]->(s:Symbol)-[:CALLS|IMPORTS|DEPENDS_ON]-(other_s:Symbol)<-[:CONTAINS]-(other_f:File)
+                MATCH (f:File)-[*1..2]-(other_f:File)
                 WHERE f.path CONTAINS '{Path(step.file_path).name}'
                 RETURN DISTINCT other_f.path AS related_file
                 LIMIT 15
@@ -574,7 +574,7 @@ Output ONLY the one-sentence summary, nothing else."""
         if self.brain and getattr(self.brain, "graph", None) and self.brain.graph.is_available:
             try:
                 query = f"""
-                MATCH (f:File)-[:CONTAINS]->(s:Symbol)-[:CALLS|IMPORTS|DEPENDS_ON]-(other_s:Symbol)<-[:CONTAINS]-(other_f:File)
+                MATCH (f:File)-[*1..2]-(other_f:File)
                 WHERE f.path CONTAINS '{Path(file_path).name}'
                 RETURN DISTINCT other_f.path AS related_file
                 LIMIT 15

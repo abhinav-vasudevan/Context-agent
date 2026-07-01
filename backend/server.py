@@ -153,6 +153,18 @@ async def get_project_state():
     return {"project": orchestrator.state.to_api_dict()}
 
 
+@app.get("/api/graph")
+async def get_architecture_graph():
+    """Get the architecture overview graph from Neo4j."""
+    if not getattr(orchestrator, 'brain', None) or not orchestrator.brain.graph:
+        return {"success": False, "graph": {"nodes": [], "links": []}}
+    try:
+        graph_data = orchestrator.brain.graph.get_graph_data()
+        return {"success": True, "graph": graph_data}
+    except Exception as e:
+        return {"success": False, "error": str(e), "graph": {"nodes": [], "links": []}}
+
+
 @app.post("/api/project/followup")
 async def project_followup(req: FollowupRequest):
     """Trigger a manual fix/followup for the project."""

@@ -22,9 +22,9 @@ log = logging.getLogger(__name__)
 try:
     from neo4j import GraphDatabase
     HAS_NEO4J = True
-except ImportError:
+except ImportError as e:
     HAS_NEO4J = False
-    log.warning("neo4j driver not installed. Run: pip install neo4j")
+    log.warning(f"neo4j driver not installed. Run: pip install neo4j. Error: {e}")
 
 
 class KnowledgeGraph:
@@ -78,6 +78,18 @@ class KnowledgeGraph:
         if self._driver:
             self._driver.close()
             self._driver = None
+
+    def execute_query(self, query: str, parameters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+        """Execute a raw Cypher query and return the results as a list of dicts."""
+        if not self._driver:
+            return []
+        try:
+            with self._driver.session(database=self.database) as session:
+                result = session.run(query, parameters or {})
+                return [dict(record) for record in result]
+        except Exception as e:
+            log.error("Failed to execute Cypher query: %s", e)
+            return []
 
     # ── Schema Setup ──────────────────────────────────────────────────
 
@@ -329,3 +341,37 @@ class KnowledgeGraph:
         with self._driver.session(database=self.database) as session:
             result = session.run(query)
             return [dict(record) for record in result]
+
+    def get_graph_data(self) -> Dict[str, Any]:
+        """Get raw nodes and links for visualization."""
+        if not self._driver:
+            return {"nodes": [], "links": []}
+            
+        nodes = []
+        links = []
+        with self._driver.session(database=self.database) as session:
+            # Get nodes
+            n_result = session.run("MATCH (n) RETURN id(n) as node_id, labels(n) as labels, properties(n) as props")
+            for record in n_result:
+                props = record["props"]
+                node_name = props.get("name", props.get("path", str(record["node_id"])))
+                nodes.append({
+                    "id": node_name,
+                    "labels": record["labels"],
+                    "properties": props
+                })
+                
+            # Get edges
+            e_result = session.run("MATCH (a)-[r]->(b) RETURN properties(a) as a_props, type(r) as type, properties(b) as b_props, id(a) as aid, id(b) as bid")
+            for record in e_result:
+                a_props = record["a_props"]
+                b_props = record["b_props"]
+                source_id = a_props.get("name", a_props.get("path", str(record["aid"])))
+                target_id = b_props.get("name", b_props.get("path", str(record["bid"])))
+                links.append({
+                    "source": source_id,
+                    "target": target_id,
+                    "type": record["type"]
+                })
+                
+        return {"nodes": nodes, "links": links}

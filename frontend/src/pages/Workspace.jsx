@@ -3,6 +3,7 @@ import { api } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 import CodeViewer from '../components/CodeViewer';
 import { Terminal, FolderTree, Cpu, ArrowLeft, Send, Sparkles, BookOpen, Code2, User, ListTodo, CheckCircle2 } from 'lucide-react';
+import ArchitectureGraph from '../components/ArchitectureGraph';
 
 export default function Workspace({ projectData, onBack }) {
   // ── State ──────────────────────────────────────────────────────────
@@ -36,6 +37,8 @@ export default function Workspace({ projectData, onBack }) {
   // Refs for autoscroll
   const terminalRef = useRef(null);
   const chatRef = useRef(null);
+  const currentLlmRef = useRef(null);
+  const currentThinkingRef = useRef(null);
 
   // ── WebSocket ──────────────────────────────────────────────────────
   const ws = useWebSocket({
@@ -44,20 +47,24 @@ export default function Workspace({ projectData, onBack }) {
       setIsThinking(false);
       setLlmText(prev => prev + data.token);
       scrollToBottom(chatRef);
+      scrollToBottom(currentLlmRef);
     },
     llm_thinking: (data) => {
       setIsThinking(true);
       setThinkingText(prev => prev + data.token);
       scrollToBottom(chatRef);
+      scrollToBottom(currentThinkingRef);
     },
     llm_done: () => {
       setLlmStreaming(false);
       setIsThinking(false);
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: llmText,
-        thinking: thinkingText
-      }]);
+      
+      api.getProjectState().then(data => {
+        if (data.project && data.project.chat_history) {
+          setMessages(data.project.chat_history);
+        }
+      }).catch(err => console.error("Failed to sync chat history:", err));
+      
       setLlmText('');
       setThinkingText('');
     },
@@ -120,9 +127,17 @@ export default function Workspace({ projectData, onBack }) {
     pong: () => {},
   });
 
-  const scrollToBottom = (ref) => {
+  const scrollToBottom = (ref, force = false) => {
     if (ref.current) {
-      ref.current.scrollTop = ref.current.scrollHeight;
+      if (force) {
+        ref.current.scrollTop = ref.current.scrollHeight;
+        return;
+      }
+      const { scrollTop, scrollHeight, clientHeight } = ref.current;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 150;
+      if (isNearBottom) {
+        ref.current.scrollTop = ref.current.scrollHeight;
+      }
     }
   };
 
@@ -144,11 +159,13 @@ export default function Workspace({ projectData, onBack }) {
   useEffect(() => {
     if (project) {
       loadFiles();
-      if (project.original_prompt && messages.length === 0) {
+      if (projectData && projectData.chat_history && projectData.chat_history.length > 0) {
+        setMessages(projectData.chat_history);
+      } else if (project.original_prompt && messages.length === 0) {
         setMessages([{ role: 'user', content: project.original_prompt }]);
       }
     }
-  }, [project]);
+  }, [project, projectData]);
 
   useEffect(() => {
     if (status === 'plan_review') {
@@ -167,9 +184,21 @@ export default function Workspace({ projectData, onBack }) {
     setLlmText('');
     setThinkingText('');
     
-    api.generatePlan(prompt).catch(console.error);
+    // Determine whether to plan or follow-up
+    const hasExistingPlan = project?.plan_steps && project.plan_steps.length > 0;
+    
+    if (hasExistingPlan) {
+      api.projectFollowup(prompt.trim()).catch(console.error);
+    } else {
+      api.generatePlan(prompt.trim()).then((res) => {
+        if (res.success && res.plan_steps) {
+          setProject(prev => ({ ...prev, plan_steps: res.plan_steps }));
+        }
+      }).catch(console.error);
+    }
+    
     setPrompt('');
-    setTimeout(() => scrollToBottom(chatRef), 100);
+    setTimeout(() => scrollToBottom(chatRef, true), 100);
   };
 
   const renderMessage = (msg, index) => {
@@ -350,16 +379,12 @@ export default function Workspace({ projectData, onBack }) {
                 <h2 className="text-2xl font-semibold text-nude-200 mb-6 flex items-center gap-3">
                   <BookOpen className="text-accent" /> Context Engine Knowledge
                 </h2>
-                <div className="p-6 bg-nude-800/50 border border-nude-700 rounded-xl font-mono text-sm leading-relaxed text-nude-300">
-                  <p className="mb-4 text-nude-400">The Context Engine automatically ingests your architectural guidelines and project structure into its Neo4j graph and ChromaDB semantic brain.</p>
-                  <div className="bg-nude-900 border border-nude-700 p-4 rounded-lg text-nude-400">
-                    <pre className="whitespace-pre-wrap font-mono text-xs text-accent">
-{`// AST Indexing Status: Online
-// Semantic Vector DB: Ready
-// Current Indexed Nodes: ${workspaceFiles.length * 12}`}
-                    </pre>
+                {/* KNOWLEDGE TAB */}
+                {activeTab === 'graph' && (
+                  <div className="h-[650px] w-full bg-[#101018] border border-nude-800 rounded-lg flex flex-col overflow-hidden relative shadow-lg">
+                    <ArchitectureGraph astNodeCount={workspaceFiles.length * 12} />
                   </div>
-                </div>
+                )}
               </div>
             </div>
           </div>
@@ -428,7 +453,7 @@ export default function Workspace({ projectData, onBack }) {
                       <span className="group-open:rotate-90 transition-transform text-nude-600">▶</span>
                       Thinking Process
                     </summary>
-                    <div className="p-3 text-xs text-nude-500 font-mono whitespace-pre-wrap border-t border-nude-800">
+                    <div ref={currentThinkingRef} className="p-3 text-xs text-nude-500 font-mono whitespace-pre-wrap border-t border-nude-800 max-h-[250px] overflow-y-auto custom-scrollbar">
                       {thinkingText}
                       {isThinking && <span className="inline-block w-1.5 h-3 ml-1 bg-nude-600 animate-pulse align-middle"></span>}
                     </div>
@@ -440,7 +465,7 @@ export default function Workspace({ projectData, onBack }) {
                     <div className="w-6 h-6 rounded bg-nude-800 border border-nude-700 flex-shrink-0 flex items-center justify-center text-accent mt-1">
                       <Sparkles size={12} />
                     </div>
-                    <div className="flex-1 text-xs text-nude-200 font-mono pt-1 whitespace-pre-wrap max-h-[350px] overflow-y-auto custom-scrollbar bg-nude-900/50 p-3 rounded-lg border border-nude-800/80 shadow-inner-soft">
+                    <div ref={currentLlmRef} className="flex-1 text-xs text-nude-200 font-mono pt-1 whitespace-pre-wrap max-h-[350px] overflow-y-auto custom-scrollbar bg-nude-900/50 p-3 rounded-lg border border-nude-800/80 shadow-inner-soft">
                       {llmText}
                       {llmStreaming && <span className="inline-block w-1.5 h-4 ml-1 bg-accent animate-pulse align-middle"></span>}
                     </div>

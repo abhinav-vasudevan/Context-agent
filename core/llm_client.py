@@ -509,12 +509,48 @@ class LLMClient:
                                     on_thinking(thinking_token)
                                 # Don't yield thinking as content
                             
-                            # Handle content tokens
+                            # Handle content tokens with <think> tag interception
                             content_token = msg.get("content", "")
                             if content_token:
-                                if on_token:
-                                    on_token(content_token)
-                                yield content_token
+                                if not getattr(self, "_in_think_block", False):
+                                    self._think_buffer = getattr(self, "_think_buffer", "") + content_token
+                                    if "<think>" in self._think_buffer:
+                                        parts = self._think_buffer.split("<think>", 1)
+                                        if parts[0]:
+                                            if on_token:
+                                                on_token(parts[0])
+                                            yield parts[0]
+                                        self._in_think_block = True
+                                        self._think_buffer = parts[1]
+                                        if on_thinking and self._think_buffer:
+                                            on_thinking(self._think_buffer)
+                                            self._think_buffer = ""
+                                    elif len(self._think_buffer) < 7 and "<think>".startswith(self._think_buffer):
+                                        pass  # Wait for more tokens to see if it's a <think> tag
+                                    else:
+                                        if on_token:
+                                            on_token(self._think_buffer)
+                                        yield self._think_buffer
+                                        self._think_buffer = ""
+                                else:
+                                    self._think_buffer = getattr(self, "_think_buffer", "") + content_token
+                                    if "</think>" in self._think_buffer:
+                                        parts = self._think_buffer.split("</think>", 1)
+                                        if on_thinking and parts[0]:
+                                            on_thinking(parts[0])
+                                        self._in_think_block = False
+                                        self._think_buffer = parts[1]
+                                        if self._think_buffer:
+                                            if on_token:
+                                                on_token(self._think_buffer)
+                                            yield self._think_buffer
+                                            self._think_buffer = ""
+                                    elif len(self._think_buffer) < 8 and "</think>".startswith(self._think_buffer):
+                                        pass  # Wait for more tokens
+                                    else:
+                                        if on_thinking:
+                                            on_thinking(self._think_buffer)
+                                        self._think_buffer = ""
                             
                             if data.get("done", False):
                                 self.total_calls += 1

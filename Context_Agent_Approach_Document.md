@@ -215,15 +215,10 @@ That handful of lines carries everything the model needs to call those functions
 
 ### 6.1 High-level components
 
-The system is split into a **Python FastAPI backend** and a **React (Vite) frontend**, connected by REST APIs and WebSockets for live streaming of generation progress.
+The system consists of a **Python FastAPI backend** handling REST APIs and WebSockets for live streaming of generation progress.
 
 ```mermaid
 flowchart TB
-    subgraph Client["Frontend (React + Vite)"]
-        Dash[Dashboard.jsx<br/>multi-project workspace manager]
-        WS_UI[Workspace.jsx<br/>live file explorer + code viewer + terminal]
-    end
-
     subgraph Server["Backend (FastAPI)"]
         API[server.py<br/>REST routes + WS mount]
         Orc[orchestrator.py<br/>state machine + control loop]
@@ -239,8 +234,6 @@ flowchart TB
         LLM[llm_client.py<br/>Ollama / Groq / Gemini]
     end
 
-    Dash <--> API
-    WS_UI <-->|"WebSocket: live tokens"| WSM
     API --> Orc
     WSM --> Orc
     Orc --> Plan
@@ -322,6 +315,29 @@ Because the registry is built from the **actual parsed syntax tree** rather than
 
 The registry doesn't just say "this file has an `add` function." It preserves the literal calling contract: parameter names, parameter types, and return types, exactly as written. This is what makes it possible for a file written in step 51 to call a function from step 3 with zero ambiguity, even though the LLM never saw a single line of that function's actual implementation.
 
+### 8.4 Graph-Filtered Context Assembly (The Neo4j Upgrade)
+
+While the AST File Registry successfully compresses a 10,000-line file into a handful of lines, what happens when a massive project contains 10,000 *files*? Even the compressed signatures would eventually overwhelm the context window.
+
+To completely break the context window limitation, the system integrates a **Neo4j Knowledge Graph** (Graphifyy). 
+
+When the Context Assembler prepares the prompt for the Coder or Fixer agent, it doesn't blindly inject the AST signatures for the entire repository. Instead, it executes a live graph traversal query (`MATCH (f:File)-[*1..2]-(other_f:File)`) to find the structural nearest neighbors of the file currently being worked on. 
+
+The LLM is only injected with the exact API signatures of files that are topologically connected to its current task. The rest of the repository remains completely hidden, ensuring the context remains mathematically bounded and incredibly cheap, no matter how infinitely large the overall codebase scales.
+
+### 8.5 Behavioral Scaling via Google's Open Knowledge Format (OKF)
+
+As the project scales structurally, it must also scale *behaviorally*. When an AI generates hundreds of files, it inherently suffers from "rule drift"—it slowly forgets overarching design philosophies, language-specific paradigms, and security guardrails that were defined in the very first prompt.
+
+To combat this, the Context Agent integrates **Google's Open Knowledge Format (OKF)**. OKF is a strict, highly-structured markdown paradigm designed specifically for autonomous systems.
+
+**How OKF Integration Works in the Agent:**
+1. **Persistent Memory Storage:** All domain-specific constraints are documented as `.md` files in a dedicated `.agent_brain/knowledge/` directory.
+2. **Immutable Injection:** During Context Assembly, before the AST Registry or the Plan Steps are added, the Orchestrator reads all OKF files and injects them directly into the **highest-priority layer of the LLM's System Prompt**.
+3. **Unshakeable Alignment:** Because these OKF rules sit at the core system level rather than the volatile user-prompt level, they become inviolable constraints. The agent cannot drift from its architectural philosophy because the rules are permanently anchored into its cognitive framework at every single execution step.
+
+Whether it's enforcing rigorous PEP8 standards, maintaining a strict neon-dark UI theme across 50 components, or mandating specific database indexing strategies, OKF guarantees that the agent's behavior remains hermetically aligned with the original vision, completely breaking the context-memory decay typically seen in long-running autonomous tasks.
+
 ---
 
 ## 9. Verification & Self-Healing Loop
@@ -387,7 +403,6 @@ flowchart TB
     Root["Project Root"] --> BE[backend/]
     Root --> Core[core/]
     Root --> Mod[models/]
-    Root --> FE[frontend/]
     Root --> UI[ui/]
     Root --> Proj[projects/]
     Root --> RootFiles["Root files:<br/>cli.py, config.py, main.py,<br/>knowledge.json, start.sh/.bat"]
@@ -404,9 +419,6 @@ flowchart TB
     Core --> runner[runner.py]
 
     Mod --> state[state.py]
-
-    FE --> dashboard[Dashboard.jsx]
-    FE --> workspace[Workspace.jsx]
 
     UI --> termui[terminal_ui.py]
 
@@ -425,7 +437,6 @@ flowchart TB
 | `core/planner.py` | Generates the dependency-ordered implementation plan |
 | `core/runner.py` | Sandbox engine — syntax checks, venv management, non-interactive execution |
 | `models/state.py` | Pydantic schemas for `ProjectState`, `PlanStep`, `FileEntry` |
-| `frontend/` | React/Vite UI — `Dashboard.jsx` (multi-project view), `Workspace.jsx` (live file explorer, code viewer, terminal logs) |
 | `ui/terminal_ui.py` | Rich-library terminal interface, an alternative to the web UI |
 | `projects/` | Isolated, per-project sandboxes, each with its own venv |
 | `cli.py` | Command-line entry point |

@@ -31,9 +31,9 @@ GROQ_MODELS = [
 # ── Ollama / LLM Settings ──────────────────────────────────────────────
 USE_GEMINI = False             # Set to True to use Google Gemini instead of Ollama
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-OLLAMA_BASE_URL = "http://127.0.0.1:11434"
-OLLAMA_MODEL = "llama3.1:8b"
-OLLAMA_NUM_CTX = 4096          # Context window (lowered to 16k for faster inference)
+OLLAMA_BASE_URL = "http://127.0.0.1:11435"
+OLLAMA_MODEL = "qwen3.6:27b"
+OLLAMA_NUM_CTX = 16384          # Context window (lowered to 16k for faster inference)
 OLLAMA_TEMPERATURE = 0.3        # Lower = more deterministic, less hallucination
 OLLAMA_REQUEST_TIMEOUT = 600    # seconds — some calls are slow on smaller models
 OLLAMA_MAX_RETRIES = 3          # Retry attempts on transient failures
@@ -102,10 +102,15 @@ CUSTOM_RULES_FILE = PROJECT_ROOT / ".contextrules"
 PROJECTS_DIR.mkdir(exist_ok=True)
 
 # ── Neo4j (Knowledge Graph) ───────────────────────────────────────────
-NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_URI = os.environ.get("NEO4J_URI", "neo4j://127.0.0.1:7697")
 NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "password")
 NEO4J_DATABASE = os.environ.get("NEO4J_DATABASE", "neo4j")
+
+#starting neo4j
+# cd /D/abhinav/Downloads/
+# chmod +x neo4j-desktop-2.2.0-x86_64.AppImage
+# ./neo4j-desktop-2.2.0-x86_64.AppImage
 
 # ── Project Brain ─────────────────────────────────────────────────────
 BRAIN_DIR_NAME = ".agent_brain"     # Created inside each project workspace

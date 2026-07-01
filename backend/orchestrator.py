@@ -176,6 +176,8 @@ class Orchestrator:
 
         if prompt:
             self.state.original_prompt = prompt
+            self.state.chat_history.append({"role": "user", "content": prompt})
+            self.state.save(self.workspace_dir / "project_state.json")
 
         if not self.state.original_prompt:
             return {"success": False, "error": "No prompt provided"}
@@ -190,15 +192,23 @@ class Orchestrator:
         await self.ws.send_status("planning", "Stage 1: Generating System Vision and Subsystems...")
 
         arch_chunks = []
+        arch_thinking_chunks = []
         def on_arch_token(token: str):
             arch_chunks.append(token)
             asyncio.ensure_future(self.ws.send_llm_token(token))
         def on_arch_thinking(token: str):
+            arch_thinking_chunks.append(token)
             asyncio.ensure_future(self.ws.send_llm_thinking(token))
 
         try:
             arch_spec = await self.master_planner.generate_vision(planning_prompt, on_token=on_arch_token, on_thinking=on_arch_thinking)
             await self.ws.send_llm_done("".join(arch_chunks))
+            self.state.chat_history.append({
+                "role": "assistant",
+                "content": "".join(arch_chunks),
+                "thinking": "".join(arch_thinking_chunks)
+            })
+            self.state.save(self.workspace_dir / "project_state.json")
         except Exception as e:
             err_msg = str(e)
             await self.ws.send_error(f"Vision Generation Error: {err_msg}")
@@ -210,15 +220,23 @@ class Orchestrator:
         await self.ws.send_status("planning", "Stage 2: Decomposing into Services and Modules...")
         
         svc_chunks = []
+        svc_thinking_chunks = []
         def on_svc_token(token: str):
             svc_chunks.append(token)
             asyncio.ensure_future(self.ws.send_llm_token(token))
         def on_svc_thinking(token: str):
+            svc_thinking_chunks.append(token)
             asyncio.ensure_future(self.ws.send_llm_thinking(token))
 
         try:
             arch_spec = await self.master_planner.generate_services(arch_spec, planning_prompt, on_token=on_svc_token, on_thinking=on_svc_thinking)
             await self.ws.send_llm_done("".join(svc_chunks))
+            self.state.chat_history.append({
+                "role": "assistant",
+                "content": "".join(svc_chunks),
+                "thinking": "".join(svc_thinking_chunks)
+            })
+            self.state.save(self.workspace_dir / "project_state.json")
         except Exception as e:
             err_msg = str(e)
             await self.ws.send_error(f"Service Generation Error: {err_msg}")
@@ -597,14 +615,23 @@ class Orchestrator:
             await self.ws.send_status("fixing", f"Fix attempt {attempts}/{config.MAX_FIX_ATTEMPTS} on {target_file}...")
 
             fix_chunks = []
+            fix_thinking_chunks = []
             def on_fix_token(token: str):
                 fix_chunks.append(token)
                 asyncio.ensure_future(self.ws.send_llm_token(token))
             def on_fix_thinking(token: str):
+                fix_thinking_chunks.append(token)
                 asyncio.ensure_future(self.ws.send_llm_thinking(token))
 
             success, msg, fixed_files = await self.fixer.fix_error(target_file, current_error, on_token=on_fix_token, on_thinking=on_fix_thinking)
             await self.ws.send_llm_done("".join(fix_chunks))
+            
+            self.state.chat_history.append({
+                "role": "assistant",
+                "content": "".join(fix_chunks),
+                "thinking": "".join(fix_thinking_chunks)
+            })
+            self.state.save(self.workspace_dir / "project_state.json")
 
             if not success:
                 await self.ws.send_error(msg, target_file)
@@ -664,17 +691,20 @@ class Orchestrator:
         await self.ws.send_error(f"Max fix attempts ({config.MAX_FIX_ATTEMPTS}) reached.", file_path)
         return False
 
-    async def handle_manual_fix(self, text: str) -> dict:
-        """Handle a manual user request to fix an error or add a feature after project completion."""
+    async def handle_manual_fix(self, prompt: str) -> dict:
+        """Handle a followup request from the user (e.g. 'run the tests' or 'add a login page')."""
         if not self.state:
-            return {"success": False, "error": "No active project"}
+            return {"success": False, "error": "No project loaded"}
+
+        self.state.chat_history.append({"role": "user", "content": prompt})
+        self.state.save(self.workspace_dir / "project_state.json")
 
         await self.ws.send_status("fixing", "Analyzing user feedback...")
         
-        target_file = self._resolve_target_file(text)
+        target_file = self._resolve_target_file(prompt)
         await self.ws.send_status("fixing", f"Targeting {target_file} for fix...")
 
-        fixed = await self._auto_fix(target_file, f"User Feedback/Error:\n{text}", verify_execution=True)
+        fixed = await self._auto_fix(target_file, f"User Feedback/Request:\n{prompt}", verify_execution=True)
         
         if fixed:
             await self.ws.send_status("fixed", f"Successfully fixed {target_file}!")

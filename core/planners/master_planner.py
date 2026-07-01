@@ -106,10 +106,10 @@ You must output a STRICT JSON object with this schema:
 }
 
 MANDATORY RULES:
-1. File paths MUST use src/<module_name>.py format (unless it's main.py).
-2. Step 1 is ALWAYS main.py at the root (NOT in src/).
+1. File paths MUST use a domain-driven folder structure (e.g. backend/api.py, frontend/app.js, core/memory.py) rather than a single src/ folder.
+2. Step 1 is ALWAYS main.py at the root.
 3. The LAST file is ALWAYS README.md.
-4. Include a requirements.txt module.
+4. Include a requirements.txt or package.json as needed.
 5. Keep descriptions EXTREMELY short (1 sentence max) to save tokens."""
 
     def __init__(self, llm: LLMClient):
@@ -184,6 +184,8 @@ MANDATORY RULES:
 
         # Parse subsystems
         for sub_data in data.get("subsystems", []):
+            if not isinstance(sub_data, dict):
+                continue
             subsystem = SubsystemSpec(
                 name=sub_data.get("name", "Unknown"),
                 purpose=sub_data.get("purpose", ""),
@@ -196,12 +198,15 @@ MANDATORY RULES:
 
         # Resolve subsystem dependency names to IDs
         name_to_id = {s.name: s.id for s in arch.subsystems}
-        for sub_data, subsystem in zip(data.get("subsystems", []), arch.subsystems):
+        for sub_data, subsystem in zip([s for s in data.get("subsystems", []) if isinstance(s, dict)], arch.subsystems):
             dep_names = sub_data.get("dependencies", [])
-            subsystem.dependencies = [name_to_id[n] for n in dep_names if n in name_to_id]
+            if isinstance(dep_names, list):
+                subsystem.dependencies = [name_to_id[n] for n in dep_names if n in name_to_id]
 
         # Parse ADRs
         for adr_data in data.get("adrs", []):
+            if not isinstance(adr_data, dict):
+                continue
             adr = ArchitectureDecisionRecord(
                 title=adr_data.get("title", ""),
                 context=adr_data.get("context", ""),
@@ -313,6 +318,8 @@ Break each subsystem into concrete services and file modules now."""
         name_to_subsystem = {s.name.lower().strip(): s for s in arch.subsystems}
 
         for idx, sub_data in enumerate(data.get("subsystems", [])):
+            if not isinstance(sub_data, dict):
+                continue
             sub_name = sub_data.get("name", "")
             subsystem = name_to_subsystem.get(sub_name.lower().strip())
             
@@ -328,6 +335,8 @@ Break each subsystem into concrete services and file modules now."""
 
             subsystem.services = []
             for svc_data in sub_data.get("services", []):
+                if not isinstance(svc_data, dict):
+                    continue
                 service = ServiceSpec(
                     name=svc_data.get("name", "Unknown"),
                     description=svc_data.get("description", ""),
@@ -337,6 +346,8 @@ Break each subsystem into concrete services and file modules now."""
 
                 # Parse modules
                 for mod_data in svc_data.get("modules", []):
+                    if not isinstance(mod_data, dict):
+                        continue
                     module = ModuleSpec(
                         name=mod_data.get("name", ""),
                         file_path=mod_data.get("file_path", ""),
