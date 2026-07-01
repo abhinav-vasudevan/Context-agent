@@ -28,8 +28,6 @@ In the early days of AI coding assistants, the prevailing architecture was the *
 **Why Multi-Agent DAGs Failed Initially:**
 These systems frequently collapsed into non-deterministic infinite loops. A developer agent would write a function, but because it didn't have the context of the entire codebase, it would call nonexistent methods. The reviewer agent would catch the error, send it back, and the developer agent would rewrite it—still blindly. *Multi-agent systems failed because they lacked a persistent, accurate map of the codebase.*
 
-> **Architectural Note on Multi-Agent Feasibility:** It is important to note that Multi-Agent architectures are not inherently flawed. With the innovations we built later (specifically the AST File Registry), Multi-Agent architectures *can* be achieved effectively. However, we began by building a **Deterministic Single-Loop Orchestrator** to guarantee stability and prove the core concepts.
-
 ### Solving Case 2: The Planner Agent & Dependency Graphs
 
 To solve **Case 2 (Massive Output)**, we realized we could never ask the LLM to write the whole application at once. 
@@ -37,24 +35,6 @@ To solve **Case 2 (Massive Output)**, we realized we could never ask the LLM to 
 Instead, we introduced the **Planner**. When a user says "Build a CLI calculator," the Planner does not write code. Its sole job is to break the massive output down into granular, microscopic files, ordered by their **dependency graph**. 
 
 The Planner knows that `utils.py` must be written *before* `main.py`, because `main.py` depends on `utils.py`. By forcing the LLM to generate only one file at a time, we completely bypass the massive output limit.
-
-```mermaid
-graph TD
-    A[Massive User Prompt: "Build Ubuntu"] --> B(Planner Agent)
-    
-    B --> C[Step 1: Write core/kernel_math.py]
-    B --> D[Step 2: Write core/memory_manager.py]
-    B --> E[Step 3: Write drivers/disk_io.py]
-    B --> F[Step 4: Write main.py]
-    
-    C --> D
-    D --> E
-    E --> F
-    
-    style A fill:#ff9999,stroke:#333,stroke-width:2px
-    style B fill:#99ccff,stroke:#333,stroke-width:2px
-    style F fill:#99ff99,stroke:#333,stroke-width:2px
-```
 
 ---
 
@@ -77,20 +57,41 @@ Every time a file is written, the Context Assembler parses it and extracts only 
 
 **100,000 lines of raw code are compressed into a lightweight, highly accurate "map" of the codebase.** The LLM doesn't need to see the internal `for` loops inside `calculate_tax()`; it only needs to see `def calculate_tax(amount: float) -> float` to know how to call it.
 
-```mermaid
-sequenceDiagram
-    participant Codebase
-    participant Context_Assembler
-    participant AST_Registry
-    participant Coder_Agent
-    
-    Codebase->>Context_Assembler: 10,000 lines of raw Python code
-    Context_Assembler->>Context_Assembler: Parse AST (Drop internal logic)
-    Context_Assembler->>AST_Registry: Save Signatures & Imports
-    
-    AST_Registry-->>Coder_Agent: Injects Lightweight Map (500 tokens)
-    Coder_Agent->>Coder_Agent: Knows exactly how to call existing functions
-    Coder_Agent->>Codebase: Generates perfectly integrated new file
-```
+---
 
-By combining the **Dependency Graph Planner** (solving Massive Output) and the **AST File Registry** (solving Massive Input), the Context Agent conquered the Context Window Bottleneck, paving the way for truly massive AI-generated architectures.
+## Part 4: Scaling to V2 - Hierarchical Architecture & Graphifyy
+
+While the AST File Registry solved the problem for medium-sized projects, we quickly realized that for truly massive enterprise systems (1,000,000+ lines of code), even a compressed AST map would exceed the context window. We needed semantic understanding and dynamic context retrieval.
+
+### The Hierarchical Master Planner
+We deprecated the flat V1 Planner in favor of the **V2 Master Planner**. Instead of jumping straight from a prompt to a list of files, the system now mimics a Principal Software Architect:
+1. **Vision Phase**: Deduces high-level architecture constraints and primary Subsystems.
+2. **Service Phase**: Decomposes Subsystems into distinct Services.
+3. **Module Phase**: Breaks Services down into individual implementation modules (files).
+
+### The Graphifyy Engine (Neo4j & ChromaDB)
+We introduced **Graph RAG** (Retrieval-Augmented Generation) to completely eradicate the Massive Input problem.
+- **Neo4j (Knowledge Graph)**: When a file is written, its AST is injected into Neo4j as a web of relationships (`File A` -> `CONTAINS` -> `Symbol X` -> `CALLS` -> `Symbol Y`). When writing a new file, the Context Engine dynamically queries Neo4j via Cypher to retrieve *only* the AST signatures of directly connected/relevant files, filtering out the other 99% of the codebase.
+- **ChromaDB (Semantic Store)**: Concurrently, a `Summarizer` agent reads the generated code and writes dense, single-sentence functional summaries. These are stored as vector embeddings in ChromaDB. If the Coder needs to know "how do we handle database connections?", it queries ChromaDB semantically to find the exact file path and intent.
+
+### OKF (Open Knowledge Format)
+To ensure the LLM respects architectural patterns across sessions, we introduced **OKF**. These are strict Markdown files (`.agent_brain/knowledge/*.md`) containing project-specific rules, design decisions, and coding standards. These rules are dynamically injected into the highest priority section of the LLM's System Prompt, guaranteeing absolute adherence to custom user requirements.
+
+---
+
+## Part 5: Complete Autonomy & Self-Healing
+
+The final piece of the V2 puzzle was absolute reliability. LLMs are non-deterministic; they make syntax errors and hallucinate dependencies. We solved this with a militaristic execution and verification loop.
+
+### Strict XML Tooling
+The `Coder` agent no longer outputs raw conversational text. It is locked into a strict XML tooling paradigm. It must use `<write_file path="...">` to output code and `<run_command>` to interact with the system. This guarantees that the Orchestrator can deterministically parse and extract code without regex failures.
+
+### The Sandbox Runner & Self-Healing Fixer
+When a file is written:
+1. **Isolation**: The `Runner` provisions an isolated Python virtual environment (`venv`) for the project.
+2. **Verification**: It executes `python -m py_compile` and runs `pytest` (if tests exist) inside the sandbox.
+3. **Self-Healing Loop**: If the execution crashes, the exact `stderr` stack trace is captured and sent to the `Fixer` agent. The Fixer is provided the error trace, the AST registry, and a history of previous failed attempts.
+4. **Surgical Patching**: The Fixer uses a highly precise `<edit_file>` search-and-replace XML tool to surgically patch the bugs in the code. This loop repeats autonomously until the code compiles perfectly.
+
+### Conclusion
+By fusing a deterministic state machine (Orchestrator) with dynamic Graph RAG (Graphifyy/Neo4j), Semantic Vector Search (ChromaDB), and autonomous sandboxed self-healing, the Context Agent effectively breaks the LLM Context Window limitation, enabling infinite scaling of AI-generated enterprise software.

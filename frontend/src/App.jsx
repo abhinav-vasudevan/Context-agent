@@ -1,7 +1,6 @@
 import { useState, useCallback } from 'react';
 import Dashboard from './pages/Dashboard';
 import Workspace from './pages/Workspace';
-import './App.css';
 
 function App() {
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -18,7 +17,7 @@ function App() {
   }, []);
 
   return (
-    <div className="app">
+    <div className="bg-nude-900 text-nude-300 font-sans h-screen w-screen overflow-hidden">
       {currentPage === 'dashboard' ? (
         <Dashboard onProjectOpen={navigateToWorkspace} />
       ) : (

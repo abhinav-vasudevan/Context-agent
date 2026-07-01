@@ -32,7 +32,7 @@ GROQ_MODELS = [
 USE_GEMINI = False             # Set to True to use Google Gemini instead of Ollama
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"
-OLLAMA_MODEL = "llama3.2:3b"
+OLLAMA_MODEL = "llama3.1:8b"
 OLLAMA_NUM_CTX = 4096          # Context window (lowered to 16k for faster inference)
 OLLAMA_TEMPERATURE = 0.3        # Lower = more deterministic, less hallucination
 OLLAMA_REQUEST_TIMEOUT = 600    # seconds — some calls are slow on smaller models

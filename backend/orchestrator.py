@@ -85,6 +85,9 @@ class Orchestrator:
 
         # Create workspace
         safe_name = "".join(c for c in name if c.isalnum() or c in (' ', '-', '_')).strip().replace(' ', '_')
+        if not safe_name:
+            safe_name = f"project_{uuid.uuid4().hex[:8]}"
+            
         self.workspace_dir = config.PROJECTS_DIR / safe_name
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self.state.workspace_path = str(self.workspace_dir)
@@ -484,7 +487,7 @@ class Orchestrator:
             # ── V1: AST Registry fallback (for bridging) ──
             # We still add to the old file registry so the fixer and fallback contexts work
             from core.context import FileRegistryBuilder
-            entry = FileRegistryBuilder.build_entry(step.file_path, code_content)
+            entry = FileRegistryBuilder.parse_file(file_path, step.file_path)
             if entry:
                 self.state.file_registry = [e for e in self.state.file_registry if e.path != step.file_path]
                 self.state.file_registry.append(entry)
@@ -726,7 +729,7 @@ class Orchestrator:
         for item in self.workspace_dir.rglob(filename):
             if item.is_file():
                 rel = item.relative_to(self.workspace_dir).as_posix()
-                if rel.startswith("venv/") or "__pycache__" in rel:
+                if "/venv/" in f"/{rel}" or "__pycache__" in rel or "/.agent_brain/" in f"/{rel}":
                     continue
                 return rel
         return None
@@ -785,7 +788,7 @@ class Orchestrator:
         for item in self.workspace_dir.rglob("*"):
             if item.is_file():
                 rel = item.relative_to(self.workspace_dir).as_posix()
-                if rel.startswith("venv/") or "__pycache__" in rel or rel.startswith(".agent_brain/"):
+                if "/venv/" in f"/{rel}" or "__pycache__" in rel or "/.agent_brain/" in f"/{rel}":
                     continue
                 files.append(rel)
         return sorted(files)

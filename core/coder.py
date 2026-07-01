@@ -102,76 +102,93 @@ class Coder:
         on_token=None,
         on_thinking=None,
     ) -> Tuple[bool, Optional[str]]:
-        """
-        Generate code for a single plan step.
-        
-        Args:
-            step: The PlanStep to execute
-            on_token: Optional callback for streaming content tokens
-            on_thinking: Optional callback for streaming thinking tokens
-            
-        Returns:
-            (success, error_message)
-        """
-        log.info("Coder: generating code for step %d (%s)", step.step_number, step.file_path)
+        log.info("Coder: generating code for step %d (%s) via Agent Loop", step.step_number, step.file_path)
 
-        # 1. Build prompt
         ctx = self.assembler.build_coder_prompt(step)
-
-        # 2. Call LLM
-        chunks = []
-        try:
-            async for chunk in self.llm.generate_stream(
-                prompt=ctx["prompt"],
-                system=ctx["system"],
-                on_token=on_token,
-                on_thinking=on_thinking,
-            ):
-                chunks.append(chunk)
-                
-        except Exception as e:
-            return False, f"LLM Generation Error: {str(e)}"
-
-        raw_output = "".join(chunks)
+        current_prompt = ctx["prompt"]
+        system_prompt = ctx["system"]
         
-        if not raw_output.strip():
-            return False, "LLM returned empty output"
-
-        # 3. Extract clean code
-        code = self._extract_code(raw_output, step.file_path)
-
-        # Safety Check: Prevent generating truncated placeholder snippets
-        if "# ..." in code or "# existing" in code.lower() or "# ... existing" in code.lower():
-            return False, "LLM returned a placeholder snippet. You MUST output the ENTIRE file without using '# ...' placeholders."
-
-        # 4. Save to workspace
-        file_path = self.workspace / step.file_path
+        max_iterations = 5
+        final_code = ""
         
-        # If the planner mistakenly created a step for a directory instead of a file
-        if not step.file_path or step.file_path.endswith("/") or file_path.is_dir() or file_path == self.workspace:
-            file_path.mkdir(parents=True, exist_ok=True)
-            step.summary = f"Created directory {step.file_path}"
-            return True, None
+        for iteration in range(max_iterations):
+            log.info("Coder: loop iteration %d/%d", iteration + 1, max_iterations)
+            chunks = []
+            try:
+                async for chunk in self.llm.generate_stream(
+                    prompt=current_prompt,
+                    system=system_prompt,
+                    on_token=on_token,
+                    on_thinking=on_thinking,
+                ):
+                    chunks.append(chunk)
+            except Exception as e:
+                return False, f"LLM Generation Error: {str(e)}"
+
+            raw_output = "".join(chunks)
+            if not raw_output.strip():
+                return False, "LLM returned empty output"
+
+            current_prompt += f"\n\nASSISTANT:\n{raw_output}\n\n"
+            system_reply = "SYSTEM:\n"
+            action_taken = False
             
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(code, encoding="utf-8")
-        
-        log.info("Coder: saved file %s (%d bytes)", step.file_path, len(code))
+            # Check for <write_file>
+            write_matches = list(re.finditer(r'<write_file\s+path=["\']([^"\']+)["\']>(.*?)</write_file>', raw_output, re.IGNORECASE | re.DOTALL))
+            for m in write_matches:
+                fpath = m.group(1).strip()
+                code = m.group(2).strip()
+                full_path = self.workspace / fpath
+                full_path.parent.mkdir(parents=True, exist_ok=True)
+                full_path.write_text(code, encoding="utf-8")
+                system_reply += f"--- Successfully wrote to {fpath} ---\n"
+                action_taken = True
+                final_code = code
 
-        # 5. Syntax check immediately (only for python files)
-        if step.file_path.endswith(".py"):
-            syntax_result = await self._syntax_runner.syntax_check(step.file_path)
-            if not syntax_result.success:
-                log.warning("Coder: Syntax error in generated code: %s", syntax_result.error)
-                return False, f"Syntax Error:\n{syntax_result.error}"
+            # Check for <run_command>
+            run_matches = list(re.finditer(r'<run_command>\s*(.*?)\s*</run_command>', raw_output, re.IGNORECASE | re.DOTALL))
+            for m in run_matches:
+                cmd = m.group(1).strip()
+                system_reply += f"--- Running: {cmd} ---\n"
+                result = await self._syntax_runner.run_shell_command(cmd)
+                if result.success:
+                    system_reply += "SUCCESS\n"
+                else:
+                    system_reply += f"FAILED (Exit {result.exit_code})\n"
+                if result.stdout:
+                    system_reply += f"STDOUT:\n{result.stdout}\n"
+                if result.stderr or result.error:
+                    system_reply += f"STDERR/ERROR:\n{result.stderr or result.error}\n"
+                system_reply += "\n"
+                action_taken = True
 
-        # 6. Parse and update File Registry
+            if "<done>" in raw_output.lower():
+                break
+                
+            if not action_taken:
+                system_reply += "You did not use <write_file>, <run_command>, or <done>. Please output valid XML tags to proceed.\n"
+                
+            current_prompt += system_reply
+
+        # Fallback if no file was written
+        if not final_code:
+            final_code = self._extract_code(raw_output, step.file_path)
+            if final_code:
+                file_path = self.workspace / step.file_path
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_text(final_code, encoding="utf-8")
+
+        if not final_code:
+            return False, "Failed to generate any valid code or write_file."
+
+        # Parse and update File Registry
+        file_path = self.workspace / step.file_path
         entry = FileRegistryBuilder.parse_file(file_path, step.file_path)
         if entry:
             self._update_registry(entry)
 
-        # 7. Generate a concrete summary
-        summary = await self._generate_summary(step.file_path, code)
+        # Generate summary
+        summary = await self._generate_summary(step.file_path, final_code)
         step.summary = summary
         self.state.step_summaries.append(summary)
 

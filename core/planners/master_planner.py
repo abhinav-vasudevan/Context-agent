@@ -47,57 +47,42 @@ class MasterPlanner:
 
     # ── System Prompts ────────────────────────────────────────────────
 
-    VISION_SYSTEM_PROMPT = """You are a world-class Principal Software Architect.
+    VISION_SYSTEM_PROMPT = """You are a Principal Software Architect.
+Your job is to analyze a user's request and decompose it into a system architecture.
 
-Your job is to analyze a user's request and decompose it into a hierarchical system architecture.
+CRITICAL INSTRUCTION: DO NOT USE `<think>` TAGS. OUTPUT ONLY THE JSON IMMEDIATELY. NO REASONING, NO MARKDOWN, NO CODE FENCES.
 
-You must output a STRICT JSON object (no markdown, no prose, no code fences) with this exact schema:
+You must output a STRICT JSON object with this exact schema:
 
 {
   "name": "Project Name",
-  "vision": "A 2-3 sentence vision statement describing the system's purpose and design philosophy.",
+  "vision": "A 1-2 sentence vision statement.",
   "scale": "small | medium | large",
   "subsystems": [
     {
       "name": "Subsystem Name",
       "purpose": "One sentence explaining why this subsystem exists.",
-      "responsibilities": ["responsibility 1", "responsibility 2"],
-      "boundaries": ["What this subsystem does NOT do"],
-      "dependencies": ["Names of other subsystems it depends on"]
+      "responsibilities": ["responsibility 1"],
+      "boundaries": ["boundary 1"],
+      "dependencies": []
     }
   ],
-  "adrs": [
-    {
-      "title": "Why use X for Y?",
-      "context": "The problem being solved.",
-      "decision": "What was decided.",
-      "alternatives": "What other options were considered.",
-      "consequences": "Tradeoffs and downstream effects."
-    }
-  ],
-  "constraints": ["Global constraint 1", "Global constraint 2"]
+  "adrs": [],
+  "constraints": []
 }
 
 SCALING RULES (CRITICAL):
-- For a SIMPLE request (calculator, script, CLI tool): output 1 subsystem with clear purpose.
-- For a MEDIUM request (web app, API, game): output 2-4 subsystems.
-- For a LARGE request (OS, distributed system, AI agent): output 5-10+ subsystems.
-- NEVER under-plan. If the user asks for something complex, you MUST decompose it deeply.
-- NEVER over-plan. A calculator does NOT need 8 subsystems.
+- SIMPLE request (calculator, script, CLI tool): Output EXACTLY 1 subsystem. NO ADRs. Keep it extremely brief.
+- MEDIUM request: 2-3 subsystems.
+- LARGE request: 4+ subsystems.
+- Keep all lists (responsibilities, etc) extremely concise to save tokens."""
 
-ADR RULES:
-- For every non-obvious design decision, create an ADR.
-- Examples: "Why use SQLite instead of PostgreSQL?", "Why REST instead of GraphQL?"
-- Simple projects may have 0-1 ADRs. Complex projects should have 3-5+.
+    SERVICES_SYSTEM_PROMPT = """You are a Principal Software Architect.
+Your job is to break subsystems into concrete SERVICES and MODULES (files).
 
-Output ONLY the JSON object. No markdown. No explanation. No code fences."""
+CRITICAL INSTRUCTION: DO NOT USE `<think>` TAGS. OUTPUT ONLY THE JSON IMMEDIATELY. NO REASONING, NO MARKDOWN, NO CODE FENCES.
 
-    SERVICES_SYSTEM_PROMPT = """You are a world-class Principal Software Architect.
-
-You are given a system architecture with subsystems. Your job is to break each subsystem
-into concrete SERVICES and MODULES (files).
-
-You must output a STRICT JSON object (no markdown, no prose, no code fences) with this schema:
+You must output a STRICT JSON object with this schema:
 
 {
   "subsystems": [
@@ -106,17 +91,12 @@ You must output a STRICT JSON object (no markdown, no prose, no code fences) wit
       "services": [
         {
           "name": "Service Name",
-          "description": "What this service does and its public API contract.",
-          "responsibilities": ["responsibility 1", "responsibility 2"],
-          "interfaces": ["public_method_1(arg: type) -> return_type"],
-          "dependencies": ["Names of other services it depends on"],
+          "description": "Short description.",
           "modules": [
             {
               "name": "Module Name",
-              "file_path": "src/subsystem_name/module_name.py",
-              "description": "Detailed description of this file's contents, including class names, function signatures, and internal logic.",
-              "exports": ["ClassName", "function_name"],
-              "dependencies": ["src/other_module.py"]
+              "file_path": "src/module_name.py",
+              "description": "File description."
             }
           ]
         }
@@ -126,18 +106,11 @@ You must output a STRICT JSON object (no markdown, no prose, no code fences) wit
 }
 
 MANDATORY RULES:
-1. Every subsystem from the input MUST appear in the output.
-2. File paths MUST use src/<subsystem_name>/<module_name>.py format for complex projects.
-3. For simple projects (1 subsystem), use flat src/<module_name>.py format.
-4. Every service MUST have at least 1 module.
-5. Step 1 is ALWAYS main.py at the root (NOT in src/).
-6. The LAST file is ALWAYS README.md.
-7. Include a requirements.txt module.
-8. Include an __init__.py for each subdirectory under src/.
-9. Module descriptions must include exact class names, function signatures with types, and algorithm logic.
-10. NEVER use placeholder descriptions. Be EXHAUSTIVELY specific.
-
-Output ONLY the JSON object. No markdown. No explanation. No code fences."""
+1. File paths MUST use src/<module_name>.py format (unless it's main.py).
+2. Step 1 is ALWAYS main.py at the root (NOT in src/).
+3. The LAST file is ALWAYS README.md.
+4. Include a requirements.txt module.
+5. Keep descriptions EXTREMELY short (1 sentence max) to save tokens."""
 
     def __init__(self, llm: LLMClient):
         self.llm = llm
@@ -336,15 +309,22 @@ Break each subsystem into concrete services and file modules now."""
                     ]
             return arch
 
-        # Map subsystem names to existing ArchitectureSpec subsystems
-        name_to_subsystem = {s.name: s for s in arch.subsystems}
+        # Map subsystem names to existing ArchitectureSpec subsystems (case-insensitive)
+        name_to_subsystem = {s.name.lower().strip(): s for s in arch.subsystems}
 
-        for sub_data in data.get("subsystems", []):
+        for idx, sub_data in enumerate(data.get("subsystems", [])):
             sub_name = sub_data.get("name", "")
-            subsystem = name_to_subsystem.get(sub_name)
+            subsystem = name_to_subsystem.get(sub_name.lower().strip())
+            
             if not subsystem:
-                log.warning("Service planner returned unknown subsystem: %s", sub_name)
-                continue
+                # Fallback: match by index if counts align perfectly, or if there's only 1
+                if len(arch.subsystems) == len(data.get("subsystems", [])):
+                    subsystem = arch.subsystems[idx]
+                elif len(arch.subsystems) == 1:
+                    subsystem = arch.subsystems[0]
+                else:
+                    log.warning("Service planner returned unknown subsystem: %s", sub_name)
+                    continue
 
             subsystem.services = []
             for svc_data in sub_data.get("services", []):

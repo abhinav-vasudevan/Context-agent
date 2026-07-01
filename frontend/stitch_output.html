@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Impeccable IDE - Aesthetic Workspace</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=Public+Sans:wght@300;400;500;600&amp;family=Fira+Code:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#F5E6D3",
+                        "background-light": "#f8f7f6",
+                        "background-dark": "#1f1a13",
+                        nude: {
+                            50: '#FAF7F2',
+                            100: '#F5F0E8',
+                            200: '#EBE2D5',
+                            300: '#DCCDB8',
+                            400: '#C8B196',
+                            500: '#A38D74',
+                            600: '#8A755E',
+                            700: '#6D5C4A',
+                            800: '#4D4135',
+                            900: '#2D2721',
+                        },
+                        border: '#E5D5C5',
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    fontFamily: {
+                        "headline": ["Inter", "sans-serif"],
+                        "display": ["Public Sans", "sans-serif"],
+                        "body": ["Inter", "sans-serif"],
+                        "label": ["Public Sans", "sans-serif"],
+                        "mono": ["Fira Code", "monospace"]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+            font-size: 1.25rem;
+        }
+        .glass {
+            background: rgba(245, 240, 232, 0.4);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #DCCDB8;
+            border-radius: 10px;
+        }
+        .syntax-keyword { color: #A38D74; font-weight: 600; }
+        .syntax-string { color: #8A755E; }
+        .syntax-func { color: #6D5C4A; font-weight: 500; }
+        .syntax-comment { color: #C8B196; font-style: italic; }
+        
+        #welcome-overlay {
+            transition: opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.8s, transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .floating {
+            animation: floating 4s ease-in-out infinite;
+        }
+        @keyframes floating {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-15px); }
+            100% { transform: translateY(0px); }
+        }
+        #main-workspace {
+            transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .hidden-initial {
+            opacity: 0;
+            transform: scale(0.98) translateY(10px);
+            pointer-events: none;
+        }
+        .visible-workspace {
+            opacity: 1 !important;
+            transform: scale(1) translateY(0) !important;
+            pointer-events: auto !important;
+        }
+
+        /* Node Link Diagram Styles */
+        .node { stroke: #fff; stroke-width: 1.5px; }
+        .link { stroke: #DCCDB8; stroke-opacity: 0.6; stroke-width: 1px; }
+    </style>
+</head>
+<body class="bg-nude-50 text-nude-800 font-body h-screen overflow-hidden select-none">
+<!-- Welcome Overlay -->
+<div class="fixed inset-0 z-50 flex items-center justify-center bg-nude-100/95 backdrop-blur-2xl transition-all duration-1000" id="welcome-overlay">
+<div class="max-w-xl w-full p-12 bg-white/40 border border-border shadow-2xl rounded-[2rem] text-center floating">
+<div class="mb-8 inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-nude-200 text-nude-700 shadow-inner">
+<span class="material-symbols-outlined !text-4xl">auto_awesome</span>
+</div>
+<h1 class="text-4xl font-display font-semibold text-nude-900 tracking-tight mb-4">Welcome to your Workspace</h1>
+<p class="text-nude-600 font-label mb-10 text-lg">A space designed for clarity, calm, and creative momentum.</p>
+<div class="relative max-w-md mx-auto group">
+<input class="w-full bg-white/60 border border-border rounded-2xl px-6 py-4 text-nude-800 focus:outline-none focus:ring-2 focus:ring-nude-300 focus:border-nude-400 transition-all text-center placeholder:text-nude-400" id="initial-prompt" placeholder="What shall we build today?" type="text"/>
+<button class="mt-8 group relative px-10 py-4 bg-nude-800 text-nude-50 rounded-2xl font-medium overflow-hidden transition-all hover:shadow-xl hover:scale-105 active:scale-95" onclick="enterWorkspace()">
+<span class="relative z-10 flex items-center gap-2">Initialize Workspace <span class="material-symbols-outlined !text-sm">arrow_forward</span></span>
+<div class="absolute inset-0 bg-nude-700 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
+</button>
+</div>
+</div>
+</div>
+<div class="hidden-initial h-screen flex flex-col" id="main-workspace">
+<!-- Top Navigation Bar -->
+<header class="z-40 bg-white/60 backdrop-blur-md border-b border-border shadow-sm flex justify-between items-center w-full px-4 h-12 shrink-0">
+<div class="flex items-center gap-6">
+<span class="text-lg font-display font-semibold text-nude-900 tracking-tight">Impeccable IDE</span>
+<nav class="hidden md:flex items-center gap-4 text-xs font-label font-medium uppercase tracking-wider">
+<span class="text-nude-900 border-b border-nude-800 pb-0.5 cursor-pointer">File</span>
+<span class="text-nude-400 hover:text-nude-600 transition-colors duration-300 cursor-pointer">Edit</span>
+<span class="text-nude-400 hover:text-nude-600 transition-colors duration-300 cursor-pointer">Selection</span>
+<span class="text-nude-400 hover:text-nude-600 transition-colors duration-300 cursor-pointer">View</span>
+<span class="text-nude-400 hover:text-nude-600 transition-colors duration-300 cursor-pointer">Go</span>
+</nav>
+</div>
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-nude-500 hover:bg-nude-100 p-1.5 rounded-lg cursor-pointer transition-all duration-300">search</span>
+<span class="material-symbols-outlined text-nude-500 hover:bg-nude-100 p-1.5 rounded-lg cursor-pointer transition-all duration-300">settings</span>
+<span class="material-symbols-outlined text-nude-500 hover:bg-nude-100 p-1.5 rounded-lg cursor-pointer transition-all duration-300">account_circle</span>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden">
+<!-- Side Icon Nav -->
+<aside class="w-14 flex flex-col items-center py-4 gap-6 bg-nude-100/40 backdrop-blur-xl border-r border-border shrink-0">
+<div class="text-nude-900 bg-nude-200/50 rounded-xl p-2.5 cursor-pointer shadow-sm transition-all duration-300 hover:scale-110">
+<span class="material-symbols-outlined" data-icon="folder_open">folder_open</span>
+</div>
+<div class="text-nude-400 p-2.5 cursor-pointer hover:text-nude-700 hover:bg-white/50 rounded-xl transition-all duration-300">
+<span class="material-symbols-outlined" data-icon="search">search</span>
+</div>
+<div class="text-nude-400 p-2.5 cursor-pointer hover:text-nude-700 hover:bg-white/50 rounded-xl transition-all duration-300">
+<span class="material-symbols-outlined" data-icon="account_tree">account_tree</span>
+</div>
+<div class="text-nude-400 p-2.5 cursor-pointer hover:text-nude-700 hover:bg-white/50 rounded-xl transition-all duration-300">
+<span class="material-symbols-outlined" data-icon="extension">extension</span>
+</div>
+<div class="mt-auto flex flex-col gap-4">
+<div class="text-nude-400 p-2.5 cursor-pointer hover:text-nude-700 transition-all">
+<span class="material-symbols-outlined" data-icon="terminal">terminal</span>
+</div>
+<div class="text-nude-400 p-2.5 cursor-pointer hover:text-nude-700 transition-all">
+<span class="material-symbols-outlined" data-icon="bug_report">bug_report</span>
+</div>
+</div>
+</aside>
+<!-- Left Sidebar: File Explorer -->
+<aside class="w-64 glass border-r border-border flex flex-col overflow-hidden shrink-0 transition-all duration-300">
+<div class="p-4 border-b border-border/50 flex justify-between items-center bg-white/20">
+<span class="text-[10px] font-label uppercase tracking-widest font-semibold text-nude-600">Explorer</span>
+<span class="material-symbols-outlined text-nude-400 text-sm cursor-pointer hover:text-nude-600 transition-colors">add</span>
+</div>
+<div class="flex-1 overflow-y-auto custom-scrollbar p-2 text-sm">
+<div class="space-y-1">
+<div class="flex items-center gap-2 p-1.5 px-2 hover:bg-nude-200/50 rounded-lg cursor-pointer transition-all duration-200 text-nude-700 group">
+<span class="material-symbols-outlined text-nude-400 !text-[18px] group-hover:rotate-90 transition-transform">keyboard_arrow_right</span>
+<span class="material-symbols-outlined text-nude-500 !text-[18px]">folder</span>
+<span class="font-medium">src</span>
+</div>
+<div class="pl-6 space-y-1">
+<div class="flex items-center gap-2 p-1.5 px-3 bg-white/60 border border-border/30 rounded-lg cursor-pointer text-nude-900 font-medium shadow-sm">
+<span class="material-symbols-outlined text-nude-600 !text-[18px]">javascript</span>
+<span>main.js</span>
+</div>
+<div class="flex items-center gap-2 p-1.5 px-3 hover:bg-nude-200/50 rounded-lg cursor-pointer transition-colors text-nude-600">
+<span class="material-symbols-outlined text-nude-400 !text-[18px]">javascript</span>
+<span>utils.js</span>
+</div>
+</div>
+<div class="flex items-center gap-2 p-1.5 px-2 hover:bg-nude-200/50 rounded-lg cursor-pointer transition-colors text-nude-700">
+<span class="material-symbols-outlined text-nude-400 !text-[18px]">keyboard_arrow_right</span>
+<span class="material-symbols-outlined text-nude-500 !text-[18px]">folder</span>
+<span class="font-medium">styles</span>
+</div>
+<div class="flex items-center gap-2 p-1.5 px-2 hover:bg-nude-200/50 rounded-lg cursor-pointer transition-colors text-nude-600 mt-4">
+<span class="material-symbols-outlined text-nude-400 !text-[18px]">description</span>
+<span>package.json</span>
+</div>
+</div>
+</div>
+</aside>
+<!-- Center Canvas: Code Editor & Graph -->
+<main class="flex-1 flex flex-col relative bg-white/10">
+<!-- Canvas Tabs -->
+<div class="flex h-10 border-b border-border/40 bg-nude-100/50 shrink-0">
+<button class="px-6 flex items-center gap-2 bg-white/80 border-r border-border/50 text-nude-900 text-[11px] font-label uppercase tracking-wider font-semibold relative transition-all" id="tab-code" onclick="switchTab('code')">
+<span class="material-symbols-outlined text-nude-500 !text-[16px]">code</span>
+<span>Code Editor</span>
+<div class="absolute bottom-0 left-0 right-0 h-[2px] bg-nude-800" id="active-indicator-code"></div>
+</button>
+<button class="px-6 flex items-center gap-2 text-nude-400 hover:bg-white/40 text-[11px] font-label uppercase tracking-wider transition-all border-r border-border/50" id="tab-graph" onclick="switchTab('graph')">
+<span class="material-symbols-outlined !text-[16px]">hub</span>
+<span>Knowledge Graph</span>
+<div class="absolute bottom-0 left-0 right-0 h-[2px] bg-nude-800 hidden" id="active-indicator-graph"></div>
+</button>
+</div>
+<!-- Tab Content -->
+<div class="flex-1 overflow-hidden relative">
+<!-- Code View -->
+<div class="absolute inset-0 overflow-auto custom-scrollbar font-mono text-sm leading-relaxed p-8 bg-nude-50/30 transition-opacity duration-300 opacity-100" id="view-code">
+<div class="flex gap-8">
+<div class="text-right text-nude-300 pr-4 select-none border-r border-nude-200 w-10 shrink-0">
+                            1<br/>2<br/>3<br/>4<br/>5<br/>6<br/>7<br/>8<br/>9<br/>10<br/>11<br/>12<br/>13<br/>14
+                        </div>
+<div class="flex-1">
+<span class="syntax-keyword">import</span> { <span class="syntax-func">createCanvas</span> } <span class="syntax-keyword">from</span> <span class="syntax-string">'./utils'</span>;<br/>
+<br/>
+<span class="syntax-comment">// Initialize the Impeccable workspace environment</span><br/>
+<span class="syntax-keyword">export const</span> <span class="syntax-func">initWorkspace</span> = () =&gt; {<br/>
+                              <span class="syntax-keyword">const</span> config = {<br/>
+                                theme: <span class="syntax-string">'impeccable-nude'</span>,<br/>
+                                typography: <span class="syntax-string">'Inter'</span>,<br/>
+                                isAIAssisted: <span class="syntax-keyword">true</span><br/>
+                              };<br/>
+<br/>
+                              <span class="syntax-func">console.log</span>(<span class="syntax-string">"Workspace synchronized."</span>);<br/>
+                              <span class="syntax-keyword">return</span> <span class="syntax-func">createCanvas</span>(config);<br/>
+                            };<br/>
+<br/>
+<span class="syntax-func">initWorkspace</span>();
+                        </div>
+</div>
+</div>
+<!-- Graph View (Hidden Initial) -->
+<div class="absolute inset-0 transition-opacity duration-300 opacity-0 pointer-events-none bg-white/20" id="view-graph">
+<div class="w-full h-full flex flex-col items-center justify-center relative overflow-hidden">
+<div class="absolute inset-0 bg-[radial-gradient(#e5d5c5_1px,transparent_1px)] [background-size:20px_20px] opacity-30"></div>
+<!-- Stylized Graph Placeholder -->
+<svg class="w-full h-full">
+<!-- Mock Nodes and Links -->
+<line class="link" x1="50%" x2="40%" y1="50%" y2="40%"></line>
+<line class="link" x1="50%" x2="60%" y1="50%" y2="45%"></line>
+<line class="link" x1="50%" x2="52%" y1="50%" y2="65%"></line>
+<line class="link" x1="40%" x2="35%" y1="40%" y2="55%"></line>
+<circle class="node" cx="50%" cy="50%" fill="#4D4135" r="20"></circle>
+<circle class="node" cx="40%" cy="40%" fill="#A38D74" r="12"></circle>
+<circle class="node" cx="60%" cy="45%" fill="#A38D74" r="12"></circle>
+<circle class="node" cx="52%" cy="65%" fill="#C8B196" r="10"></circle>
+<circle class="node" cx="35%" cy="55%" fill="#DCCDB8" r="8"></circle>
+</svg>
+<div class="absolute bottom-8 left-1/2 -translate-x-1/2 px-4 py-2 bg-white/80 border border-border rounded-full shadow-lg text-[10px] font-label uppercase tracking-widest text-nude-600">
+                            Knowledge Topology: Active
+                        </div>
+</div>
+</div>
+</div>
+<!-- Bottom Panel: Terminal -->
+<section class="h-40 glass border-t border-border flex flex-col transition-all duration-500 ease-in-out shrink-0" id="terminal-panel">
+<div class="h-8 flex items-center justify-between px-4 bg-white/40 border-b border-border/30">
+<div class="flex gap-6">
+<span class="text-[10px] font-label uppercase tracking-widest font-bold text-nude-800 cursor-pointer">Terminal</span>
+<span class="text-[10px] font-label uppercase tracking-widest font-medium text-nude-400 cursor-pointer hover:text-nude-600 transition-colors">Output</span>
+<span class="text-[10px] font-label uppercase tracking-widest font-medium text-nude-400 cursor-pointer hover:text-nude-600 transition-colors">Problems</span>
+</div>
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined !text-sm text-nude-400 cursor-pointer hover:text-nude-600 transition-colors">add</span>
+<span class="material-symbols-outlined !text-sm text-nude-400 cursor-pointer hover:text-nude-600 transition-colors" id="terminal-toggle-icon" onclick="toggleTerminal()">keyboard_arrow_down</span>
+</div>
+</div>
+<div class="flex-1 p-4 font-mono text-xs text-nude-600 overflow-y-auto custom-scrollbar bg-white/20" id="terminal-content">
+<div class="flex gap-2">
+<span class="text-nude-400">➜</span>
+<span class="text-nude-700">npm run develop</span>
+</div>
+<div class="mt-1 text-nude-400 italic">[system] initializing impeccable engine v2.4...</div>
+<div class="text-nude-500">Watching for file changes in ./src...</div>
+<div class="text-nude-500">√ Server listening on http://localhost:3000</div>
+<div class="mt-2 flex gap-2">
+<span class="text-nude-400">➜</span>
+<span class="bg-nude-800 w-2 h-4 animate-pulse"></span>
+</div>
+</div>
+</section>
+</main>
+<!-- Right Sidebar: AI Chatbot -->
+<aside class="w-80 glass border-l border-border flex flex-col overflow-hidden shrink-0">
+<div class="p-5 border-b border-border/50 flex items-center gap-4 bg-white/40">
+<div class="w-10 h-10 rounded-2xl bg-nude-800 flex items-center justify-center text-nude-50 shadow-md">
+<span class="material-symbols-outlined !text-xl" style="font-variation-settings: 'FILL' 1;">smart_toy</span>
+</div>
+<div>
+<h3 class="text-sm font-semibold text-nude-900 leading-tight">Impeccable AI</h3>
+<div class="flex items-center gap-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+<span class="text-[10px] text-nude-500 font-label">Ready to refine</span>
+</div>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-6">
+<!-- AI message -->
+<div class="flex flex-col gap-2 max-w-[90%]">
+<div class="p-4 bg-white/70 rounded-2xl rounded-tl-none border border-border/30 shadow-sm text-sm text-nude-700 leading-relaxed">
+                        Welcome to your new workspace. I've prepared the environment based on your current project context. How shall we begin?
+                    </div>
+<span class="text-[10px] text-nude-400 pl-1 font-label">AI • Just now</span>
+</div>
+<!-- User message -->
+<div class="flex flex-col items-end gap-2 ml-auto max-w-[90%]">
+<div class="p-4 bg-nude-800 text-nude-50 rounded-2xl rounded-tr-none shadow-md text-sm leading-relaxed">
+                        Thank you. Let's optimize the main canvas loop.
+                    </div>
+<span class="text-[10px] text-nude-400 pr-1 font-label">You • 1 min ago</span>
+</div>
+</div>
+<!-- Chat Input -->
+<div class="p-5 bg-white/40 border-t border-border/30">
+<div class="relative group">
+<textarea class="w-full bg-white border border-border/50 rounded-2xl px-5 py-4 text-sm focus:outline-none focus:ring-2 focus:ring-nude-200 focus:border-nude-400 transition-all resize-none pr-12 shadow-sm" placeholder="Message Impeccable..." rows="1"></textarea>
+<button class="absolute right-3 bottom-3 p-2 text-nude-400 hover:text-nude-800 hover:bg-nude-50 rounded-xl transition-all">
+<span class="material-symbols-outlined !text-xl">send</span>
+</button>
+</div>
+<div class="mt-4 flex gap-2 overflow-x-auto custom-scrollbar pb-1 no-scrollbar">
+<button class="text-[10px] font-medium bg-white/80 border border-border/40 px-3 py-1.5 rounded-full whitespace-nowrap hover:bg-nude-200 transition-all duration-200">Review Code</button>
+<button class="text-[10px] font-medium bg-white/80 border border-border/40 px-3 py-1.5 rounded-full whitespace-nowrap hover:bg-nude-200 transition-all duration-200">Refactor</button>
+<button class="text-[10px] font-medium bg-white/80 border border-border/40 px-3 py-1.5 rounded-full whitespace-nowrap hover:bg-nude-200 transition-all duration-200">Debug</button>
+</div>
+</div>
+</aside>
+</div>
+</div>
+<!-- Floating Atmosphere Particles -->
+<div class="fixed inset-0 -z-10 pointer-events-none opacity-40">
+<div class="absolute top-1/4 left-1/4 w-96 h-96 bg-nude-200/40 rounded-full blur-[120px]"></div>
+<div class="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] bg-nude-100/50 rounded-full blur-[150px]"></div>
+</div>
+<script>
+    function enterWorkspace() {
+        const overlay = document.getElementById('welcome-overlay');
+        const workspace = document.getElementById('main-workspace');
+        
+        // Start transition
+        overlay.style.opacity = '0';
+        overlay.style.transform = 'scale(1.05)';
+        
+        setTimeout(() => {
+            overlay.style.visibility = 'hidden';
+            workspace.classList.add('visible-workspace');
+        }, 600);
+    }
+
+    function switchTab(tab) {
+        const codeView = document.getElementById('view-code');
+        const graphView = document.getElementById('view-graph');
+        const tabCodeBtn = document.getElementById('tab-code');
+        const tabGraphBtn = document.getElementById('tab-graph');
+        const codeIndicator = document.getElementById('active-indicator-code');
+        const graphIndicator = document.getElementById('active-indicator-graph');
+
+        if (tab === 'code') {
+            // UI Classes
+            codeView.classList.remove('opacity-0', 'pointer-events-none');
+            codeView.classList.add('opacity-100');
+            graphView.classList.add('opacity-0', 'pointer-events-none');
+            graphView.classList.remove('opacity-100');
+            
+            // Buttons
+            tabCodeBtn.className = "px-6 flex items-center gap-2 bg-white/80 border-r border-border/50 text-nude-900 text-[11px] font-label uppercase tracking-wider font-semibold relative transition-all";
+            tabGraphBtn.className = "px-6 flex items-center gap-2 text-nude-400 hover:bg-white/40 text-[11px] font-label uppercase tracking-wider transition-all border-r border-border/50";
+            
+            codeIndicator.classList.remove('hidden');
+            graphIndicator.classList.add('hidden');
+        } else {
+            // UI Classes
+            graphView.classList.remove('opacity-0', 'pointer-events-none');
+            graphView.classList.add('opacity-100');
+            codeView.classList.add('opacity-0', 'pointer-events-none');
+            codeView.classList.remove('opacity-100');
+            
+            // Buttons
+            tabGraphBtn.className = "px-6 flex items-center gap-2 bg-white/80 border-r border-border/50 text-nude-900 text-[11px] font-label uppercase tracking-wider font-semibold relative transition-all";
+            tabCodeBtn.className = "px-6 flex items-center gap-2 text-nude-400 hover:bg-white/40 text-[11px] font-label uppercase tracking-wider transition-all border-r border-border/50";
+            
+            graphIndicator.classList.remove('hidden');
+            codeIndicator.classList.add('hidden');
+        }
+    }
+
+    let isTerminalExpanded = true;
+    function toggleTerminal() {
+        const panel = document.getElementById('terminal-panel');
+        const icon = document.getElementById('terminal-toggle-icon');
+        const content = document.getElementById('terminal-content');
+        
+        if (isTerminalExpanded) {
+            panel.style.height = '32px';
+            icon.innerText = 'keyboard_arrow_up';
+            content.style.opacity = '0';
+        } else {
+            panel.style.height = '160px';
+            icon.innerText = 'keyboard_arrow_down';
+            content.style.opacity = '1';
+        }
+        isTerminalExpanded = !isTerminalExpanded;
+    }
+
+    // Interactions
+    document.querySelectorAll('button, .cursor-pointer').forEach(el => {
+        el.addEventListener('mousedown', () => {
+            el.style.transform = 'scale(0.97)';
+        });
+        el.addEventListener('mouseup', () => {
+            el.style.transform = '';
+        });
+        el.addEventListener('mouseleave', () => {
+            el.style.transform = '';
+        });
+    });
+
+    const tx = document.querySelector('textarea');
+    if (tx) {
+        tx.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        });
+    }
+
+    // Handle initial prompt enter key
+    document.getElementById('initial-prompt').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') enterWorkspace();
+    });
+</script>
+</body></html>

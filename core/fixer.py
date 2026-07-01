@@ -216,6 +216,29 @@ class Fixer:
                 
                 current_prompt += system_reply
                 has_view_file = True
+
+            # Check for <run_command> tags
+            has_run_command = False
+            run_matches = list(re.finditer(r'<run_command>\s*(.*?)\s*</run_command>', raw_output, re.IGNORECASE | re.DOTALL))
+            if run_matches:
+                system_reply = "SYSTEM:\n"
+                for m in run_matches:
+                    cmd = m.group(1).strip()
+                    system_reply += f"--- Running: {cmd} ---\n"
+                    # Execute shell command securely
+                    result = await self.runner.run_shell_command(cmd)
+                    if result.success:
+                        system_reply += "SUCCESS\n"
+                    else:
+                        system_reply += f"FAILED (Exit {result.exit_code})\n"
+                    if result.stdout:
+                        system_reply += f"STDOUT:\n{result.stdout}\n"
+                    if result.stderr or result.error:
+                        system_reply += f"STDERR/ERROR:\n{result.stderr or result.error}\n"
+                    system_reply += "\n"
+                
+                current_prompt += system_reply
+                has_run_command = True
                 
             # Parse edit blocks (both new <edit_file> and legacy # FILE: format)
             file_edits = {}
@@ -284,11 +307,11 @@ class Fixer:
                     if "<done>" in raw_output.lower():
                         break
                         
-                    if has_view_file:
-                        log.info("Fixer: agent requested to view files, continuing loop")
+                    if has_view_file or has_run_command:
+                        log.info("Fixer: agent used tools, continuing loop")
                         continue
                     
-                    current_prompt += "SYSTEM:\nYou did not use <view_file>, <edit_file>, or <done>. Please output valid XML tags to proceed.\n\n"
+                    current_prompt += "SYSTEM:\nYou did not use <view_file>, <edit_file>, <run_command>, or <done>. Please output valid XML tags to proceed.\n\n"
                     log.info("Fixer: agent outputted invalid tags, looping back")
                     continue
                     

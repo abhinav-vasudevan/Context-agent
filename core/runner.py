@@ -400,9 +400,11 @@ class Runner:
                 self.current_process = None
                 return RunResult(
                     success=False,
-                    error=f"Process timed out after {timeout}s",
+                    stdout=stdout_buf.decode("utf-8", errors="replace"),
+                    stderr=stderr_buf.decode("utf-8", errors="replace"),
                     exit_code=-1,
                     runtime_ms=elapsed,
+                    error=f"Timeout: process ran longer than {timeout} seconds",
                     file_path=file_path,
                 )
 
@@ -452,6 +454,68 @@ class Runner:
                 success=False,
                 error=f"Execution error: {e}",
                 file_path=file_path,
+            )
+
+    async def run_shell_command(self, command: str, timeout: int = 15) -> RunResult:
+        """
+        Securely execute an arbitrary shell command within the project workspace.
+        This allows the AI Agent to run tests, linters, or pip install safely.
+        """
+        # 1. Security Check
+        security_err = self.security.check_command(command)
+        if security_err:
+            return RunResult(
+                success=False,
+                error=security_err
+            )
+
+        log.info("Runner: executing shell command: %s", command)
+        start_time = time.monotonic()
+        
+        try:
+            import os
+            env = os.environ.copy()
+            # If using a venv, inject it into PATH
+            if self.venv_path and self.venv_path.exists():
+                venv_bin = str(self.venv_path / "Scripts") if config.IS_WINDOWS else str(self.venv_path / "bin")
+                env["PATH"] = f"{venv_bin}{os.pathsep}{env.get('PATH', '')}"
+            env["PYTHONPATH"] = str(self.workspace.resolve())
+
+            process = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(self.workspace),
+                env=env,
+            )
+
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=timeout)
+            elapsed = int((time.monotonic() - start_time) * 1000)
+            
+            return RunResult(
+                success=process.returncode == 0,
+                stdout=stdout_bytes.decode("utf-8", errors="replace"),
+                stderr=stderr_bytes.decode("utf-8", errors="replace"),
+                exit_code=process.returncode or 0,
+                runtime_ms=elapsed
+            )
+            
+        except asyncio.TimeoutError:
+            try:
+                process.kill()
+            except Exception:
+                pass
+            elapsed = int((time.monotonic() - start_time) * 1000)
+            return RunResult(
+                success=False,
+                exit_code=-1,
+                runtime_ms=elapsed,
+                error=f"Timeout: command exceeded {timeout} seconds."
+            )
+        except Exception as e:
+            return RunResult(
+                success=False,
+                error=f"Execution error: {str(e)}"
             )
 
     async def send_process_input(self, data: str) -> bool:

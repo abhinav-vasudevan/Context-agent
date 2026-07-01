@@ -173,6 +173,72 @@ class ProjectBrain:
 
         log.info("Architecture ingestion complete.")
 
+    def update_graphify_knowledge(self):
+        """
+        Runs Graphifyy AST extraction across the workspace and ingests the raw
+        semantic symbols and edges into Neo4j.
+        """
+        import os
+        try:
+            import graphify.extract
+            import graphify.build
+            from pathlib import Path
+            
+            log.info("Starting Graphifyy extraction...")
+            # Collect all python files
+            paths = list(self.workspace_dir.rglob("*.py"))
+            # Filter out virtual environments
+            paths = [p for p in paths if "venv" not in p.parts and ".git" not in p.parts]
+            
+            # Extract AST (skipping semantic LLM clustering to save time/tokens)
+            extractions = graphify.extract.extract(paths)
+            
+            # Ingest into Neo4j
+            count = 0
+            
+            nodes = extractions.get('nodes', [])
+            edges = extractions.get('edges', [])
+            
+            for node in nodes:
+                node_id = node.get('id')
+                label = node.get('label', 'Unknown')
+                file_type = node.get('file_type', 'code')
+                source_file = node.get('source_file', '')
+                
+                # We skip rationale since we have ChromaDB for semantics
+                if file_type == 'rationale':
+                    continue
+                
+                # Add Symbol Node
+                self.graph.add_node("Symbol", {
+                    "id": node_id,
+                    "name": label,
+                    "kind": file_type,
+                    "file": source_file
+                })
+                # Add file mapping if known
+                if source_file:
+                    self.graph.add_node("File", {"path": source_file, "name": Path(source_file).name})
+                    self.graph.add_edge("File", source_file, "Symbol", node_id, "CONTAINS")
+                
+                count += 1
+                
+            for edge in edges:
+                source = edge.get('source')
+                target = edge.get('target')
+                relation = edge.get('relation', 'CALLS').upper()
+                
+                if source and target:
+                    # We ensure target exists, as graphify might point to external dependencies
+                    self.graph.add_node("Symbol", {"id": target, "name": target})
+                    self.graph.add_edge("Symbol", source, "Symbol", target, relation)
+
+            log.info("Graphifyy ingestion complete. Ingested %d symbols into Neo4j.", count)
+        except ImportError:
+            log.warning("Graphifyy is not installed. Skipping automatic architecture graph build.")
+        except Exception as e:
+            log.error("Failed to update graphify knowledge: %s", e)
+
     # ── File Summary Management ───────────────────────────────────────
 
     def store_file_summary(self, summary: SemanticSummary, subsystem: str = "", service: str = ""):

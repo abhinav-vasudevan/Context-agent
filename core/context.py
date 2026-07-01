@@ -218,42 +218,39 @@ class ContextAssembler:
 
     # ── System prompts ────────────────────────────────────────────────
 
-    CODER_SYSTEM_PROMPT = """You are a Python code generator. Your ONLY job is to output the requested code.
+    CODER_SYSTEM_PROMPT = """You are an elite, autonomous Software Engineer. Your job is to implement the requested plan step using XML tools.
 
 CRITICAL THINKING RULE (HIGHEST PRIORITY):
-- You MUST output the code directly.
+- Use <think> tags to reason about your implementation before writing code.
+
+AVAILABLE TOOLS:
+You must use the following XML tools to interact with the workspace:
+
+1. `<write_file path="path/to/file.py">`
+Use this to write the complete content of a new or existing file.
+Format:
+<write_file path="core/math.py">
+def add(a, b):
+    return a + b
+</write_file>
+
+2. `<run_command>`
+Use this to securely execute shell commands in the project workspace (e.g. `pytest`, `python -m unittest`, `pip install`).
+Format: `<run_command>pytest tests/test_api.py</run_command>`. The system will reply with the output.
+
+3. `<done>`
+Use this ONLY when you have fully implemented the requested code AND verified it runs correctly (if tests are possible).
 
 ABSOLUTE RULES — violating ANY means failure:
-1. You MUST output EXACTLY ONE Markdown code block (```python ... ```) containing the complete file.
-2. DO NOT output multiple code blocks. DO NOT output any test scripts, usage examples, or `main.py` updates.
-3. NO explanations, preamble, or "Here is the code" text.
-4. The ENTIRE content inside the code block must be valid Python.
-5. Write ONE complete, self-contained file.
-6. Use the FILE REGISTRY to import from existing project files — do NOT redefine things that already exist. Pay close attention to function signatures and class definitions in the registry!
-7. Every function and class must have a REAL implementation — NO empty pass stubs, NO "# TODO" placeholders.
-8. NEVER use placeholders like `# ... existing code ...` or `# ... rest of file ...`. You MUST write out every single line of code so the file can be saved directly.
-9. Add brief inline comments where logic is non-obvious.
-10. NEVER import from `main.py` inside any `src/` modules. This causes Circular Imports! `main.py` should import from `src/`, not the other way around.
-11. MANDATORY: Ensure all required standard libraries (like `requests`, `subprocess`, `json`) are explicitly imported at the top of the file.
-12. MANDATORY: When calling functions or classes, meticulously check their signatures and ensure ALL required positional arguments are provided.
-13. MANDATORY: If creating `main.py`, you MUST include a proper execution block `if __name__ == "__main__":` that completely instantiates the system and starts its main loop.
-14. MANDATORY: NEVER use hardcoded placeholder values, dummy variables, or "example usage" data in your final code (e.g., `height = 175`). You MUST dynamically fetch inputs, use arguments, or parse user input correctly to wire up functions. The code must be production-ready!
+1. You MUST use `<write_file>` to output code. NEVER use markdown code blocks like ```python.
+2. The ENTIRE content inside `<write_file>` must be valid Python.
+3. Use the FILE REGISTRY to import from existing project files. Pay close attention to function signatures!
+4. Every function and class must have a REAL implementation — NO empty pass stubs, NO "# TODO" placeholders.
+5. NEVER use placeholders like `# ... existing code ...`. You MUST write out every single line of code so the file can be saved directly.
+6. MANDATORY: Ensure all required standard libraries (like `requests`, `json`) are explicitly imported at the top of the file.
+7. MANDATORY: NEVER use hardcoded dummy variables.
 
-WRONG (will be rejected):
-Here is the code:
-```python
-class Calc: pass
-```
-Here is a test script:
-```python
-import sys
-```
-
-CORRECT:
-```python
-[Complete code for exactly ONE file]
-```
-"""
+Output your valid XML tools now."""
 
     MARKDOWN_SYSTEM_PROMPT = """You are a technical documentation generator. You output ONLY raw Markdown or Text content.
 
@@ -272,7 +269,7 @@ If the user asks for an Operating System, an AI Agent, or a complex application,
 
 MANDATORY SECTIONS:
 1. `# System Architecture` (At least 500 words explaining the core design philosophy).
-2. `## Core Components` (List EVERY module needed, e.g., `src/memory.py`, `src/config.py`, `src/utils.py`, `src/error_handlers.py`, etc. For EACH file, write a 200+ word deep-dive explaining its exact logic, function signatures, and internal behaviors).
+2. `## Core Components` (List EVERY module needed, e.g., `core/memory.py`, `backend/config.py`, `utils/helpers.py`, `core/error_handlers.py`, etc. For EACH file, write a 200+ word deep-dive explaining its exact logic, function signatures, and internal behaviors).
 3. `## Data Structures` (Define all exact JSON schemas, classes, and state properties).
 4. `## Edge Cases & Error Handling`
 
@@ -284,14 +281,14 @@ Your job is to take a detailed Architectural Blueprint and translate it into a s
 
 MANDATORY RULES:
 1. Step 1 MUST ALWAYS be creating `main.py` at the root. It MUST be a completely empty skeleton with NO imports. Just `if __name__ == "__main__":` and `pass`.
-2. All other source files MUST go inside `src/`.
+2. All other source files MUST be placed in feature-based subdirectories (e.g., `core/`, `backend/`, `frontend/`, `models/`). Do NOT put everything in a flat directory. Use a deep, modular structure.
 3. There MUST be only ONE step for `main.py`. The system will automatically update it later, so do NOT create an 'update main.py' step.
 4. The LAST step MUST be creating `README.md`.
 5. Each step produces EXACTLY ONE file.
 6. Steps must be numbered sequentially and have clear dependencies.
 7. DYNAMIC SCALING (CRITICAL ARCHITECTURE RULE): You must dynamically decide the number of files based on the complexity of the request.
    - For a simple script or calculator: generate 1-3 files.
-   - For a complex application (e.g., an AI agent, an OS, a web backend): You MUST output AT LEAST 10-15 STEPS (files). Break the logic down heavily into modular components (e.g., `src/memory_manager.py`, `src/tools_file_ops.py`, `src/llm_client.py`, `src/config_loader.py`, `src/utils.py`, `src/prompts.py`, `src/error_handlers.py`). If you group logic into giant files or output fewer than 10 files for a complex request, you will FAIL. ALWAYS aim for an exhaustive, production-ready architecture.
+   - For a complex application (e.g., an AI agent, an OS, a web backend): You MUST output AT LEAST 10-15 STEPS (files). Break the logic down heavily into modular components across domains (e.g., `core/memory.py`, `backend/server.py`, `models/state.py`, `utils/config.py`). If you group logic into giant files or output fewer than 10 files for a complex request, you will FAIL. ALWAYS aim for an exhaustive, production-ready architecture.
 8. MANDATORY README.md Rules:
    - NEVER include fake git clone instructions or assume a git repository exists. Only document how to activate the venv and run the code.
    - ALWAYS explicitly mention what the AI actually built (the features, the system).
@@ -359,7 +356,7 @@ STEP N: Create requirements.txt
 FILE: requirements.txt
 DEPENDS: [all relevant steps]
 DESCRIPTION:
-List all third-party dependencies required by the project (e.g., requests, fastapi, pydantic) with versions if necessary.
+Output a plain text list of pip packages required (one per line, e.g. requests==2.31.0). DO NOT WRITE A PYTHON SCRIPT. JUST THE PACKAGE NAMES.
 
 ---
 STEP N+1: Create README.md
@@ -405,7 +402,11 @@ Format inside the tag:
 >>>>>>> REPLACE
 `</edit_file>`
 
-3. `<done>`
+3. `<run_command>`
+Use this to run terminal commands (e.g., `pytest`, `python main.py`, `pip install x`) securely within the project sandbox to verify your fixes. 
+Format inside the tag: `<run_command>pytest test_api.py</run_command>`. The system will reply with stdout/stderr.
+
+4. `<done>`
 Use this when you believe the bug is fixed and you want the system to test the code.
 
 CRITICAL RULES:
@@ -439,23 +440,29 @@ Output ONLY the one-sentence summary, nothing else."""
     def __init__(self, state: ProjectState):
         self.state = state
         self.knowledge = ""
-        try:
-            knowledge_path = config.PROJECT_ROOT / "knowledge.json"
-            if knowledge_path.exists():
-                import json
-                data = json.loads(knowledge_path.read_text(encoding="utf-8"))
-                self.knowledge = "\n\n=== GLOBAL KNOWLEDGE BASE ===\n" + json.dumps(data, indent=2) + "\n=============================\n"
-        except Exception as e:
-            log.warning("Failed to load knowledge.json: %s", e)
-            
         self.custom_rules = ""
+        self.brain = None
+        
         try:
-            if config.CUSTOM_RULES_FILE.exists():
-                rules_text = config.CUSTOM_RULES_FILE.read_text(encoding="utf-8").strip()
-                if rules_text:
-                    self.custom_rules = f"\n\n=== STRICT PROJECT RULES (.contextrules) ===\nYou MUST follow these rules exactly on every request:\n\n{rules_text}\n============================================\n"
+            from core.brain.project_brain import ProjectBrain
+            self.brain = ProjectBrain(config.PROJECT_ROOT)
         except Exception as e:
-            log.warning("Failed to load .contextrules: %s", e)
+            log.warning("Failed to initialize ProjectBrain: %s", e)
+            
+        try:
+            # Load OKF Markdown files
+            knowledge_dir = config.PROJECT_ROOT / ".agent_brain" / "knowledge"
+            if knowledge_dir.exists():
+                okf_texts = []
+                for md_file in knowledge_dir.glob("*.md"):
+                    content = md_file.read_text(encoding="utf-8").strip()
+                    if content:
+                        okf_texts.append(f"--- Rule from {md_file.name} ---\n{content}\n")
+                
+                if okf_texts:
+                    self.custom_rules = "\n\n=== STRICT PROJECT RULES (OKF) ===\nYou MUST follow these rules exactly on every request:\n\n" + "\n".join(okf_texts) + "\n====================================\n"
+        except Exception as e:
+            log.warning("Failed to load OKF knowledge base: %s", e)
 
     def build_coder_prompt(self, step: PlanStep) -> dict:
         """
@@ -470,6 +477,30 @@ Output ONLY the one-sentence summary, nothing else."""
 
         # 1. File Registry (PINNED — always included in full)
         registry_str = self.state.get_file_registry_string()
+        
+        # Phase 3: Use Graphifyy/Neo4j graph to filter registry if possible
+        if self.brain and getattr(self.brain, "graph", None) and self.brain.graph.is_available:
+            try:
+                # Query Neo4j for files connected to this step's file
+                query = f"""
+                MATCH (f:File)-[:CONTAINS]->(s:Symbol)-[:CALLS|IMPORTS|DEPENDS_ON]-(other_s:Symbol)<-[:CONTAINS]-(other_f:File)
+                WHERE f.path CONTAINS '{Path(step.file_path).name}'
+                RETURN DISTINCT other_f.path AS related_file
+                LIMIT 15
+                """
+                records = self.brain.graph.execute_query(query)
+                if records:
+                    related_paths = [r["related_file"] for r in records]
+                    filtered_registry = []
+                    for entry in self.state.file_registry:
+                        if entry.path == step.file_path or any(Path(p).name in entry.path for p in related_paths):
+                            filtered_registry.append(entry.to_registry_string())
+                    if filtered_registry:
+                        registry_str = "FILE REGISTRY (Graph-Filtered):\n" + "=" * 45 + "\n" + "\n\n".join(filtered_registry)
+                        log.info("Successfully filtered registry using Graphifyy Neo4j data.")
+            except Exception as e:
+                log.warning("Failed to filter registry using Graphifyy: %s", e)
+        
         registry_tokens = LLMClient.count_tokens(registry_str)
         parts.append(registry_str)
         used += registry_tokens
@@ -539,7 +570,28 @@ Output ONLY the one-sentence summary, nothing else."""
         parts = []
 
         # File Registry
-        parts.append(self.state.get_file_registry_string())
+        registry_str = self.state.get_file_registry_string()
+        if self.brain and getattr(self.brain, "graph", None) and self.brain.graph.is_available:
+            try:
+                query = f"""
+                MATCH (f:File)-[:CONTAINS]->(s:Symbol)-[:CALLS|IMPORTS|DEPENDS_ON]-(other_s:Symbol)<-[:CONTAINS]-(other_f:File)
+                WHERE f.path CONTAINS '{Path(file_path).name}'
+                RETURN DISTINCT other_f.path AS related_file
+                LIMIT 15
+                """
+                records = self.brain.graph.execute_query(query)
+                if records:
+                    related_paths = [r["related_file"] for r in records]
+                    filtered_registry = []
+                    for entry in self.state.file_registry:
+                        if entry.path == file_path or any(Path(p).name in entry.path for p in related_paths):
+                            filtered_registry.append(entry.to_registry_string())
+                    if filtered_registry:
+                        registry_str = "FILE REGISTRY (Graph-Filtered):\n" + "=" * 45 + "\n" + "\n\n".join(filtered_registry)
+            except Exception as e:
+                log.warning("Failed to filter registry for fixer using Graphifyy: %s", e)
+                
+        parts.append(registry_str)
 
         # The broken file
         parts.append(f"FILE WITH ERROR: {file_path}")
