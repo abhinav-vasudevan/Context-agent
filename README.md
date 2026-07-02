@@ -11,10 +11,13 @@
 - **Neo4j (Graphifyy)**: The core graph database that powers Graphifyy. It stores the project's entire knowledge graph (AST nodes, files, dependencies, symbols) for advanced Graph RAG and context filtering.
 - **ChromaDB**: Acts as the semantic vector database to store file summaries, architecture specs, and natural language logic for hybrid retrieval.
 - **OKF (Open Knowledge Format by Google)**: A highly-structured, strict markdown-based formatting paradigm. Files are stored in `.agent_brain/knowledge/*.md` and act as persistent, immutable system constraints. OKF allows the injection of architectural guardrails, specific coding guidelines, and domain knowledge directly into the LLM's primary system prompt, guaranteeing that the agent adheres to overarching project rules at every step of generation.
-- **Ollama / LiteLLM**: The core LLM client layer. Interacts with local models (e.g., `llama3.1:8b`, `qwen:14b`) or cloud APIs (Groq, Gemini), managing streaming, JSON enforcement, and token limits.
+- **Ollama / LiteLLM**: The core LLM client layer. Interacts with local models (e.g., `llama3.1:8b`, `qwen3.6:27b`) or cloud APIs (Groq, Gemini), managing streaming, JSON enforcement, and token limits.
 - **Pydantic & Dataclasses**: Enforces strict data models for internal agent state validation (`ProjectState`, `PlanSteps`, `ArchitectureSpecs`).
 - **Pytest & Venv**: The secure sandbox engine (`core/runner.py`) provisions isolated `venv` virtual environments for every project and uses `pytest` and `py_compile` to autonomously verify code execution and capture stack traces.
-- **XML Tooling**: The Coder agent interacts with the workspace exclusively via strict XML tools (`<write_file>`, `<run_command>`, `<edit_file>`).
+- **XML Tooling & Surgical Editing**: The Coder and Fixer agents interact with the workspace exclusively via strict XML tools:
+  - `<write_file>`: For writing complete new files or completely overwriting existing ones.
+  - `<edit_file>`: For precise SEARCH/REPLACE blocks. This allows the agent to surgically inject new features or patch bugs into the middle of massive files without deleting the surrounding code.
+  - `<run_command>`: For securely executing terminal commands in the sandboxed workspace.
 
 ---
 
@@ -30,11 +33,12 @@ Traditional AI coding agents fail on large codebases because they attempt to cra
 
 ## 🏗️ The Complete Flow: From Prompt to Final Project
 
-### Phase 1: Hierarchical Planning (V2 Architecture)
+### Phase 1: Hierarchical & Iterative Planning (V2 Architecture)
 1. **Vision & Subsystems**: The user submits a prompt. The `MasterPlanner` processes it and generates a massive, high-level `ArchitectureSpec`. It breaks the system down into concrete **Subsystems**.
 2. **Service Decomposition**: The planner iterates through each subsystem and breaks it down into individual **Services** and specific **Modules (files)**.
 3. **Plan Flattening**: The nested architecture is flattened into sequential `PlanStep`s (always starting with an empty `main.py` and ending with `requirements.txt` and `README.md`).
-4. **Approval**: The backend pauses and awaits the user's explicit approval (`/api/plan/approve`) before execution.
+4. **Iterative Follow-Ups**: If the user submits a follow-up prompt on an existing project, the Orchestrator's **Intent Routing** layer uses the LLM to classify if it's a bug fix or a feature request. If it's a feature request, the Master Planner generates an **Update Plan** by reading the existing Graph and appending new surgical steps marked as `[NEW]` (missing files) or `[MODIFY]` (existing files) directly to the queue, entirely preserving previous work!
+5. **Approval**: The backend pauses and awaits the user's explicit approval (`/api/plan/approve`) before execution.
 
 ### Phase 2: Execution & Code Generation
 Once the plan is approved, the `Orchestrator` begins the execution loop step-by-step:
@@ -45,10 +49,14 @@ Once the plan is approved, the `Orchestrator` begins the execution loop step-by-
 2. **Code Generation**: The `Coder` agent uses the assembled context and outputs raw code enclosed in strict XML tags (e.g., `<write_file path="...">`).
 3. **Integration**: If the file is a Python module, the Orchestrator automatically generates a prompt to update `main.py` and securely imports the new module.
 
-### Phase 3: Verification, QA, and Self-Healing
+### Phase 3: Verification, Deep Semantic Analysis, and Self-Healing
 1. **Sandbox Execution**: The `Runner` securely tests the generated code (e.g., `python -m py_compile`).
-2. **The Fixer Loop**: If a syntax or runtime error occurs, the Orchestrator captures the `stderr` traceback and hands it to the `Fixer` agent. The Fixer explores the workspace using `<view_file>` and patches the code using precise `<edit_file>` search/replace blocks until the error is resolved.
-3. **Graph Ingestion**: Once a file is stable, the `Summarizer` agent reads the code, and the `ProjectBrain` ingests the file's AST into Neo4j and its semantic summary into ChromaDB, updating the Graphifyy knowledge base for future context queries.
+2. **The Deep Semantic Analyzer (`core/analyzer.py`)**: Before the Fixer attempts any repair, the Orchestrator invokes the `StaticAnalyzer` which orchestrates three industry-grade semantic analysis tools running securely in the venv:
+   - **Ruff** (`ruff check`): Executes lightning-fast analysis to catch syntax violations and basic linting errors.
+   - **Pyright** (`pyright`): Performs deep semantic type-checking to catch logic errors, mismatched function signatures, and complex inheritance issues across the whole project graph.
+   - **Semgrep** (`semgrep scan`): Scans the codebase for security vulnerabilities, hardcoded secrets, and complex AST-level anti-patterns.
+3. **Deep Semantic Fixer Loop**: The Analyzer extracts the JSON output from all three tools (Ruff, Pyright, and Semgrep) and aggregates them into a highly structured Fix Prompt. The `Fixer` agent receives this unified error report. Acting as an advanced automated debugger, it explores the workspace using `<view_file>`, cross-references the semantic errors with the actual files, and patches the code using precise `<edit_file>` `<<<<<<< SEARCH` and `>>>>>>> REPLACE` blocks. It repeats this autonomously until all three semantic analyzers pass perfectly.
+4. **Graph Ingestion**: Once a file is stable, the `Summarizer` agent reads the code, and the `ProjectBrain` ingests the file's AST into Neo4j and its semantic summary into ChromaDB, updating the Graphifyy knowledge base for future context queries.
 
 ---
 

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 import CodeViewer from '../components/CodeViewer';
-import { Terminal, FolderTree, Cpu, ArrowLeft, Send, Sparkles, BookOpen, Code2, User, ListTodo, CheckCircle2 } from 'lucide-react';
+import { Terminal, FolderTree, Cpu, ArrowLeft, Send, Sparkles, BookOpen, Code2, User, ListTodo, CheckCircle2, Activity } from 'lucide-react';
 import ArchitectureGraph from '../components/ArchitectureGraph';
 
 export default function Workspace({ projectData, onBack }) {
@@ -320,17 +320,29 @@ export default function Workspace({ projectData, onBack }) {
                   <h2 className="text-2xl font-semibold text-nude-200 flex items-center gap-3">
                     <ListTodo className="text-accent" /> Implementation Plan
                   </h2>
-                  {status === 'plan_review' && (
-                    <button
-                      onClick={async () => {
-                        await api.approvePlan();
-                        await api.executeAll();
-                      }}
-                      className="px-5 py-2.5 bg-accent hover:bg-accent/80 text-nude-900 font-semibold text-sm rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all flex items-center gap-2"
-                    >
-                      <CheckCircle2 size={18} /> Approve & Execute
-                    </button>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {status === 'plan_review' && (
+                      <button
+                        onClick={async () => {
+                          await api.approvePlan();
+                          await api.executeAll();
+                        }}
+                        className="px-5 py-2.5 bg-accent hover:bg-accent/80 text-nude-900 font-semibold text-sm rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all flex items-center gap-2"
+                      >
+                        <CheckCircle2 size={18} /> Approve & Execute
+                      </button>
+                    )}
+                    {(status === 'completed' || status === 'idle' || status === 'error') && project?.plan_approved && (
+                      <button
+                        onClick={async () => {
+                          await api.executeAll();
+                        }}
+                        className="px-5 py-2.5 bg-nude-700 hover:bg-nude-600 text-nude-100 font-semibold text-sm rounded-lg border border-nude-600 shadow-[0_0_15px_rgba(0,0,0,0.2)] transition-all flex items-center gap-2"
+                      >
+                        <Activity size={18} className="text-accent" /> Check for Errors
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex flex-col gap-4">

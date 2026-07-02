@@ -25,17 +25,18 @@
 
 ## 1. Executive Summary
 
-Context Agent is an autonomous, agentic coding system. A user describes an application in natural language, and the system plans it, writes it file-by-file, checks each file for correctness, automatically repairs broken code, and gives the user explicit control over when the generated program actually runs.
+Context Agent is an advanced autonomous, agentic coding system. A user describes an application in natural language, and the system architecturally plans it, writes it file-by-file, performs deep semantic analysis on every file, automatically patches complex bugs, and seamlessly evolves the codebase through iterative follow-up requests without destroying past work.
 
-What makes the system worth documenting in detail is not the chatbot loop on top — it's the engineering underneath that loop, which exists entirely to defeat one structural limitation of every large language model: **the context window**. Three architectural pillars were built, in direct response to three distinct failure modes that this limitation produces:
+What makes the system worth documenting in detail is not the chatbot loop on top — it's the robust engineering underneath that loop, which exists entirely to defeat the structural limitations of large language models. The system relies on four architectural pillars:
 
 | Pillar | Defeats | Mechanism |
 |---|---|---|
-| **Planner Agent + Dependency Graph** | Massive Output | Breaks one giant generation request into an ordered sequence of small, single-file generation requests |
-| **Context Assembler + AST File Registry** | Massive Input | Replaces "paste the whole codebase" with a compressed structural map of signatures and imports |
-| **Verification & Self-Healing Loop** | Generation Errors | Confirms every file is syntactically and behaviorally correct before moving on, repairing it automatically if not |
+| **Hierarchical Master Planner** | Massive Output | Breaks massive generation requests into Subsystems, Services, and Modules in a dependency-ordered sequence. |
+| **Iterative Update Planning** | The Evolution Bottleneck | Evaluates follow-up prompts using Intent Routing and appends surgical `[NEW]` or `[MODIFY]` steps to an existing architecture dynamically. |
+| **AST Registry + Neo4j Graph** | Massive Input | Compresses the codebase into structural signatures and uses graph traversal to inject only topologically relevant context to the LLM. |
+| **Deep Semantic Fixer Loop** | Generation Errors | Runs Ruff, Pyright, and Semgrep to catch deep logic/type/security errors, then patches them autonomously using precise `<edit_file>` search/replace blocks. |
 
-The result is a **Deterministic Single-Loop Orchestrator**: one predictable control loop (rather than a web of cooperating agents) that plans, writes, checks, and fixes — file by file — until the full application exists and runs.
+The result is a **Deterministic Single-Loop Orchestrator**: one predictable control loop (rather than a chaotic web of cooperating agents) that plans, writes, checks, and fixes — file by file — until the full application exists and evolves flawlessly.
 
 ---
 
@@ -50,15 +51,18 @@ flowchart TD
     CW["Context Window Constraint<br/>(Hard limit on tokens the LLM can read + write)"]
     CW --> C1["Failure Mode 1<br/>Massive Input"]
     CW --> C2["Failure Mode 2<br/>Massive Output"]
+    CW --> C4["Failure Mode 4<br/>The Evolution Bottleneck"]
     CW --> C3["Failure Mode 3<br/>The Compound Case<br/>(Massive Input + Massive Output)"]
 
     C1 --> C1a["Existing codebase or prompt<br/>exceeds what the LLM can read"]
     C2 --> C2a["Requested app needs more tokens<br/>to generate than one response allows"]
-    C3 --> C3a["Both happen at once —<br/>the normal state of real production software"]
+    C4 --> C4a["Updating existing code seamlessly<br/>without regenerating entire files"]
+    C3 --> C3a["All happen at once —<br/>the normal state of real production software"]
 
     style CW fill:#ffcccc,stroke:#333,stroke-width:2px
     style C1 fill:#ffe0b3,stroke:#333
     style C2 fill:#ffe0b3,stroke:#333
+    style C4 fill:#ffe0b3,stroke:#333
     style C3 fill:#ff9999,stroke:#333,stroke-width:2px
 ```
 
@@ -73,9 +77,13 @@ If a codebase has, say, 100,000 lines of code spread across a monorepo, it canno
 
 If a user asks for something genuinely large — *"build an entire operating system"* — the model understands the request perfectly well, but it **physically cannot** emit the millions of lines required in a single response. It runs into its own output token ceiling (e.g. `max_tokens=8192`) and stops mid-file, mid-function, sometimes mid-line.
 
-### 2.4 Failure Mode 3 — The Compound Case
+### 2.4 Failure Mode 4 — The Evolution Bottleneck
 
-This is the real-world scenario for production engineering: you already have a large, established codebase (Failure Mode 1) **and** you're asking for a large new feature set on top of it (Failure Mode 2), simultaneously. Neither problem can be solved in isolation — solving them independently is the entire reason this architecture exists.
+Once a massive project is built, users inevitably want to update it. If a user asks to *"add a dark mode toggle to the frontend"*, traditional agents attempt to rewrite the entire frontend file from scratch. This frequently breaks existing logic, wastes massive amounts of tokens, and destroys the integrity of previously verified code.
+
+### 2.5 Failure Mode 3 — The Compound Case
+
+This is the real-world scenario for production engineering: you already have a large, established codebase (Failure Mode 1), you're asking for a large new feature set on top of it (Failure Mode 2), and you need it injected into existing files seamlessly (Failure Mode 4), simultaneously. Neither problem can be solved in isolation — solving them cohesively is the entire reason the V2 architecture exists.
 
 ---
 
@@ -115,28 +123,25 @@ flowchart LR
 
 ---
 
-## 4. Solving the Output Bottleneck: The Planner & the Dependency Graph
+## 4. Solving the Output Bottleneck: The Master Planner (V2)
 
-### 4.1 The core idea
+### 4.1 Hierarchical System Vision
 
-The system never asks the LLM to write an entire application in one generation. Instead, a dedicated **Planner Agent** is introduced whose only job is decomposition — it writes no code at all.
+The system never asks the LLM to write an entire application in one generation. Instead, a dedicated **Master Planner** decomposes the request into a rigid, multi-stage hierarchy:
+1. **Vision**: Deduces overarching architectural constraints.
+2. **Subsystems**: Breaks the system into logical domains (e.g. `Frontend`, `Backend`, `Database`).
+3. **Services & Modules**: Breaks subsystems into concrete files in strict **dependency order**.
 
-When a user says *"Build a CLI calculator,"* the Planner's output is not source code; it is a **strictly structured implementation plan**, listing every file the application needs, in **dependency order**. The Planner understands, for example, that `utils.py` must be written before `main.py`, because `main.py` imports from `utils.py`.
+By forcing generation down to **one file at a time**, the system never asks the LLM to exceed its output ceiling.
 
-By forcing generation down to **one file at a time**, the system never asks the LLM to exceed its output ceiling — no matter how large the overall application is.
+### 4.2 Iterative Update Planning (Solving Evolution)
 
-### 4.2 From plan to state machine
+To solve the Evolution Bottleneck (Failure Mode 4), the `MasterPlanner` features a secondary pipeline: `generate_update_plan()`.
+When a user submits a follow-up request on an existing project, the system performs **Intent Routing**:
+- If it's a bug fix, it's routed directly to the Semantic Fixer.
+- If it's a feature update, the Master Planner reads the current Graph and AST Registry, and emits a highly surgical delta of `PlanSteps` marked as `[NEW]` (for creating missing files) or `[MODIFY]` (for updating existing files).
 
-The Planner's raw text output is then parsed by a `parse_plan()` routine on the backend, which extracts exact file paths and their descriptions and builds a stateful `ProjectState`. Every planned file is tracked through three states:
-
-```mermaid
-stateDiagram-v2
-    [*] --> PENDING : Planner adds file to plan
-    PENDING --> IN_PROGRESS : Orchestrator selects next file
-    IN_PROGRESS --> COMPLETED : File written + verified
-    IN_PROGRESS --> IN_PROGRESS : Verification fails → fix loop retries
-    COMPLETED --> [*]
-```
+These steps are appended directly to the `ProjectState`, allowing the Coder agent to use `<edit_file>` tags to surgically inject the new logic without wiping the old code.
 
 ### 4.3 Example: decomposing a massive request
 
@@ -232,6 +237,7 @@ flowchart TB
         Fix[fixer.py]
         Run[runner.py<br/>sandbox + venv]
         LLM[llm_client.py<br/>Ollama / Groq / Gemini]
+        Ana[analyzer.py<br/>Ruff/Pyright/Semgrep]
     end
 
     API --> Orc
@@ -241,9 +247,11 @@ flowchart TB
     Orc --> Coder
     Orc --> Fix
     Orc --> Run
+    Orc --> Ana
     Plan --> LLM
     Coder --> LLM
     Fix --> LLM
+    Ana --> Fix
     Ctx --> Coder
 ```
 
@@ -251,15 +259,17 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    A[User Prompt] --> B[Planning Phase]
-    B --> C[Execution Phase<br/>iterate plan file-by-file]
-    C --> D[Context Assembly<br/>AST Registry injection]
-    D --> E[Verification & Auto-Fixing<br/>sandboxed execution]
-    E -->|file complete| C
-    E -->|all files complete| F[Application Ready<br/>awaiting explicit run permission]
+    A[User Prompt] --> B[Intent Routing]
+    B -->|Bug Fix| E
+    B -->|Feature Update / New| C[Planning Phase<br/>MasterPlanner generates delta]
+    C --> D[Execution Phase<br/>iterate plan file-by-file]
+    D --> F[Context Assembly<br/>AST Registry injection]
+    F --> E[Verification, Deep Semantic Analysis & Auto-Fixing<br/>sandboxed execution]
+    E -->|file complete| D
+    E -->|all files complete| G[Application Ready<br/>awaiting explicit run permission]
 
     style A fill:#cce5ff
-    style F fill:#ccffcc
+    style G fill:#ccffcc
 ```
 
 ---
@@ -288,8 +298,8 @@ flowchart TD
 Three details matter here:
 
 1. **Context Construction** is rebuilt fresh for every single file — it never grows unbounded, because it draws on the *compressed* registry rather than the raw, ever-growing codebase.
-2. **LLM Invocation** can route to a local model (`qwen:14b` via Ollama) or hosted providers (Groq, Gemini), through a single resilient client (`llm_client.py`) that handles token estimation, SSE streaming, and exponential backoff.
-3. **Extraction** is a strict parsing step — the model's raw markdown response is never trusted blindly; only the code block is pulled out and written to disk.
+2. **LLM Invocation** can route to a local model (`qwen3.6:27b` via Ollama) or hosted providers (Groq, Gemini), through a single resilient client (`llm_client.py`) that handles token estimation, SSE streaming, and exponential backoff.
+3. **Extraction & Surgical Editing**: The Coder agent supports advanced XML tooling. It can either overwrite files with `<write_file>`, or use `<edit_file>` to surgically inject features via `<<<<<<< SEARCH` and `>>>>>>> REPLACE` blocks, entirely preserving the integrity of existing code. This allows the system to seamlessly handle **Iterative Follow-Up Planning** without starting from scratch.
 
 ---
 
@@ -340,17 +350,29 @@ Whether it's enforcing rigorous PEP8 standards, maintaining a strict neon-dark U
 
 ---
 
-## 9. Verification & Self-Healing Loop
+## 9. Verification, Deep Semantic Analysis & Self-Healing Loop
 
-The system does not trust the LLM to produce perfect code on the first attempt. Every file passes through an autonomous verification and repair cycle before the Orchestrator considers it complete.
+The system does not trust the LLM to produce perfect code on the first attempt. Every file passes through a multi-layered autonomous verification and repair cycle before the Orchestrator considers it complete.
+
+### 9.1 The Deep Semantic Analyzer (`core/analyzer.py`)
+
+Before any auto-fixing is attempted, the Orchestrator invokes the **StaticAnalyzer**, which orchestrates three industry-grade semantic analysis tools securely inside the project's virtual environment:
+
+1. **Ruff** (`ruff check`): Executes lightning-fast analysis to catch syntax violations, missing imports, and basic linting errors.
+2. **Pyright** (`pyright`): Performs deep semantic type-checking. It traverses the entire project graph to catch logic errors, mismatched function signatures, and complex inheritance issues that basic linters miss.
+3. **Semgrep** (`semgrep scan`): Scans the codebase's Abstract Syntax Tree (AST) for security vulnerabilities, hardcoded secrets, and complex architectural anti-patterns.
+
+### 9.2 The Autonomous Fixer Pipeline
+
+The `StaticAnalyzer` captures the JSON output from all three tools (Ruff, Pyright, and Semgrep) and aggregates them into a highly structured Fix Prompt. 
 
 ```mermaid
 flowchart TD
-    W[File written to sandbox] --> S["Immediate syntax check:<br/>python -m py_compile <file>"]
-    S -->|Pass| RT{Project run<br/>requested?}
-    S -->|Fail| EC[Error Capture<br/>stderr traceback recorded]
-    EC --> FP["Fix Prompt constructed:<br/>'You wrote this code: [Code].<br/>It threw this error: [Traceback]. Fix it.'"]
-    FP --> Regen[LLM generates corrected version]
+    W[File written/edited in sandbox] --> SA["StaticAnalyzer Runs:<br/>1. Ruff (Syntax)<br/>2. Pyright (Types/Logic)<br/>3. Semgrep (Security)"]
+    SA -->|All Pass| RT{Project run<br/>requested?}
+    SA -->|Errors Found| EC[JSON Error Aggregation]
+    EC --> FP["Deep Semantic Fixer:<br/>Analyzes AST context, reads actual file,<br/>correlates JSON semantic errors"]
+    FP --> Regen[LLM generates surgical <edit_file> block]
     Regen --> W
     EC -.->|attempt count exceeds<br/>MAX_FIX_ATTEMPTS| Halt[Escalate to user]
 
@@ -417,6 +439,18 @@ flowchart TB
     Core --> llmc[llm_client.py]
     Core --> planner[planner.py]
     Core --> runner[runner.py]
+    Core --> analyzer[analyzer.py]
+    
+    Root --> Brain[core/brain/]
+    Brain --> kg[knowledge_graph.py]
+    Brain --> pb[project_brain.py]
+
+    Root --> Retr[core/retrieval/]
+    Retr --> ss[semantic_store.py]
+    Retr --> ce[context_engine.py]
+
+    Root --> Agt[core/agents/]
+    Agt --> sum[summarizer.py]
 
     Mod --> state[state.py]
 
@@ -436,6 +470,11 @@ flowchart TB
 | `core/llm_client.py` | Async wrapper around LLM providers; handles token estimation, SSE streaming, backoff |
 | `core/planner.py` | Generates the dependency-ordered implementation plan |
 | `core/runner.py` | Sandbox engine — syntax checks, venv management, non-interactive execution |
+| `core/analyzer.py` | Deep semantic analysis using Ruff, Pyright, and Semgrep to generate JSON bug reports |
+| `core/brain/knowledge_graph.py` | Neo4j integration; maps AST structural dependencies |
+| `core/retrieval/semantic_store.py` | ChromaDB integration; semantic search for files and plan histories |
+| `core/agents/summarizer.py` | Analyzes generated files and writes ultra-dense functional summaries |
+| `core/planners/master_planner.py` | V2 Hierarchical Planner (Vision -> Subsystems -> Services -> Modules) |
 | `models/state.py` | Pydantic schemas for `ProjectState`, `PlanStep`, `FileEntry` |
 | `ui/terminal_ui.py` | Rich-library terminal interface, an alternative to the web UI |
 | `projects/` | Isolated, per-project sandboxes, each with its own venv |
@@ -451,13 +490,14 @@ flowchart TB
 
 | Failure Mode | Symptom Without a Fix | Component That Solves It | Mechanism |
 |---|---|---|---|
-| Massive Input | `413` errors, truncated prompts, hallucinated code from forgotten context | **Context Assembler + AST File Registry** | Compresses the existing codebase into signatures-only |
-| Massive Output | Generation stops mid-file when the output ceiling is hit | **Planner Agent + Dependency Graph** | Breaks generation into one small file per LLM call |
-| Compound Case | Both happen simultaneously in real-world projects | **Both of the above, combined** | Each pillar solves its half independently, so together they cover the combined case |
+| Massive Input | `413` errors, truncated prompts, hallucinated code from forgotten context | **AST File Registry + Neo4j Graph + ChromaDB** | Compresses codebase into signatures and uses live graph traversal to inject only topologically relevant files |
+| Massive Output | Generation stops mid-file when the output ceiling is hit | **Hierarchical Master Planner** | Breaks generation into Subsystems, Services, and Modules in strict dependency order |
+| Evolution Bottleneck | Updating existing code breaks it or requires regenerating the whole file | **Intent Routing + Iterative Update Planning** | Differentiates bug fixes from feature requests; appends surgical `[NEW]` and `[MODIFY]` steps to existing state |
+| Compound Case | All happen simultaneously in real-world projects | **All of the above, combined** | Each pillar solves its facet independently |
 | Code Stitching (model invents wrong function calls) | Broken integrations between files | **AST File Registry specifically** | Exact, deterministic signatures rather than paraphrased summaries |
-| Imperfect first-draft code | Syntax errors, runtime crashes | **Verification & Self-Healing Loop** | Immediate `py_compile` check + traceback-driven fix prompts |
+| Imperfect first-draft code | Syntax errors, logic flaws, architectural anti-patterns | **Deep Semantic Fixer Loop** | `StaticAnalyzer` runs Ruff, Pyright, and Semgrep to generate JSON bug reports for precise `<edit_file>` patching |
 | Unsafe autonomous execution | Risk to host machine | **Security & Sandboxing Model** | Venv isolation + command blocklist + explicit permission gate |
-| Multi-agent instability (early industry pattern) | Non-deterministic infinite review loops | **Deterministic Single-Loop Orchestrator** | One predictable control loop instead of unmanaged agent cross-talk |
+| Multi-agent instability | Non-deterministic infinite review loops | **Deterministic Single-Loop Orchestrator** | One predictable control loop instead of unmanaged agent cross-talk |
 
 ---
 
@@ -469,7 +509,8 @@ Pulling the above together, the system as it stands today has demonstrably solve
 - ✅ **Massive Input** — via the Context Assembler's AST-based File Registry, replacing raw code with exact structural signatures.
 - ✅ **The Compound Case** — as a direct consequence of the two solutions above being composable and independent.
 - ✅ **Code stitching errors** — by guaranteeing the LLM always sees *exact*, parser-derived function signatures rather than free-text summaries that could drift.
-- ✅ **First-draft code quality** — via a bounded, traceback-driven self-healing loop that catches and repairs both syntax and runtime errors without user intervention.
+- ✅ **First-draft code quality (Deep Semantic Analysis)** — via a bounded, traceback-driven self-healing loop. The `StaticAnalyzer` invokes **Ruff** (syntax), **Pyright** (typing/logic), and **Semgrep** (security). The Fixer acts as a deep semantic analyzer, consuming this JSON data to generate highly precise `<edit_file>` search/replace blocks that surgically fix complex bugs without regenerating whole files.
+- ✅ **Iterative Evolution** — via Intent Routing, the Orchestrator can differentiate between bug fixes and feature updates, directing the Master Planner to append `[NEW]` and `[MODIFY]` steps to an existing architecture dynamically.
 - ✅ **Safe autonomous execution** — via a three-layer security model (permission gate, command blocklist, venv isolation) that keeps the host system untouched regardless of what the LLM generates.
 - ✅ **A stable foundation for orchestration** — by proving the Planner → Context Assembly → Verification cycle inside a single, deterministic control loop rather than an unmanaged web of agents.
 
@@ -510,7 +551,7 @@ In other words: the single-loop architecture wasn't built as a permanent ceiling
 
 ## 15. Operational Reference: Running the System
 
-1. Ensure Ollama is running (`ollama serve`) with the `qwen:14b` model pulled.
+1. Ensure Ollama is running (`ollama serve`) with the `qwen3.6:27b` model pulled.
 2. Run the startup script:
    ```bash
    ./start.sh
@@ -527,15 +568,20 @@ In other words: the single-loop architecture wasn't built as a permanent ceiling
 |---|---|
 | **Context Window** | The maximum number of tokens an LLM can read and generate in a single call |
 | **Massive Input / Output / Compound Case** | The three failure modes that occur when a task exceeds the context window on the input side, output side, or both |
-| **Planner Agent** | Component that turns a user prompt into a dependency-ordered list of files to write; writes no code itself |
+| **Evolution Bottleneck** | The failure mode where an agent cannot safely update an existing massive codebase without regenerating (and breaking) entire files |
+| **Hierarchical Master Planner** | V2 Component that turns a user prompt into a multi-staged (Vision -> Subsystem -> Service) dependency-ordered list of files |
 | **Dependency Graph** | The ordering of files such that anything a file depends on is written before it |
-| **Context Assembler** | The component that compresses the existing codebase into a structural map before each new generation step |
-| **AST (Abstract Syntax Tree)** | Python's native representation of parsed code structure, used here to extract signatures without needing to "understand" logic |
 | **AST File Registry** | The compressed, signatures-only map of the codebase built by the Context Assembler |
+| **Neo4j Knowledge Graph** | Graph database that maps the structural dependencies of the AST File Registry to prevent context overflow in massive projects |
+| **ChromaDB Semantic Store** | Vector database used to query functional summaries of previously generated files and plans |
+| **Deep Semantic Analyzer** | Pipeline (`core/analyzer.py`) that executes Ruff (syntax), Pyright (logic/types), and Semgrep (security) against the codebase |
+| **Surgical Editing (`<edit_file>`)** | XML tool allowing agents to inject SEARCH/REPLACE blocks into the middle of massive files without touching surrounding code |
+| **Intent Routing** | Orchestrator logic that categorizes follow-up prompts into Bug Fixes or Feature Updates |
+| **OKF (Open Knowledge Format)** | Google-designed framework for persisting core architectural and alignment rules directly into the highest-priority agent system prompt |
 | **Code Stitching** | The failure where a model forgets or mis-recalls a previously written function's exact name or signature |
-| **Deterministic Single-Loop Orchestrator** | The chosen control architecture: one predictable loop driving Planning → Execution → Context Assembly → Verification, instead of a web of cooperating agents |
+| **Deterministic Single-Loop Orchestrator** | The chosen control architecture: one predictable loop driving Planning → Execution → Context Assembly → Verification |
 | **Multi-Agent DAG** | An architecture where separate agents (e.g. Developer, Reviewer, QA) hand work to each other in sequence |
-| **Self-Healing Loop** | The bounded retry cycle that captures errors and feeds them back into a fix prompt automatically |
+| **Self-Healing Loop** | The bounded retry cycle that captures semantic errors and feeds them back into a fix prompt automatically |
 | **Venv Isolation** | Giving every generated project its own Python virtual environment to avoid touching the host system |
 | **Command Blocklist** | A hard-coded list of destructive shell commands the orchestrator refuses to execute |
 

@@ -107,8 +107,8 @@ You must output a STRICT JSON object with this schema:
 
 MANDATORY RULES:
 1. File paths MUST use a domain-driven folder structure (e.g. backend/api.py, frontend/app.js, core/memory.py) rather than a single src/ folder.
-2. Step 1 is ALWAYS main.py at the root.
-3. The LAST file is ALWAYS README.md.
+2. The LAST code file MUST ALWAYS be main.py at the root. Do NOT schedule main.py as Step 1. It must be generated after all other code files so it can correctly import and connect them.
+3. The very last file overall is ALWAYS README.md.
 4. Include a requirements.txt or package.json as needed.
 5. Keep descriptions EXTREMELY short (1 sentence max) to save tokens."""
 
@@ -451,6 +451,82 @@ Break each subsystem into concrete services and file modules now."""
         ))
 
         log.info("MasterPlanner: flattened to %d plan steps", len(steps))
+        return steps
+
+    # ── Stage 4: Update Planning (Iterative) ──────────────────────────
+
+    async def generate_update_plan(
+        self,
+        prompt: str,
+        state: "ProjectState",
+        on_token: Optional[Callable] = None,
+        on_thinking: Optional[Callable] = None,
+    ) -> list:
+        """
+        Generate a list of PlanSteps to update an existing project.
+        """
+        from models.state import PlanStep
+        
+        log.info("MasterPlanner: generating update plan for prompt")
+        
+        system_prompt = """You are a Principal Software Architect.
+Your task is to generate a JSON array of steps to update the existing project based on the user's request.
+CRITICAL: DO NOT use <think> tags. OUTPUT ONLY VALID JSON.
+
+Format:
+[
+  {
+    "action": "MODIFY" or "NEW",
+    "file_path": "path/to/file.py",
+    "description": "A precise description of what needs to change or be created."
+  }
+]"""
+
+        files_context = "\n".join([f"- {entry.path}" for entry in state.file_registry])
+        
+        user_prompt = f"""USER REQUEST:
+{prompt}
+
+CURRENT FILES IN REGISTRY:
+{files_context}
+
+Output the JSON array of steps."""
+
+        chunks = []
+        async for chunk in self.llm.generate_stream(
+            prompt=user_prompt,
+            system=system_prompt,
+            on_token=on_token,
+            on_thinking=on_thinking,
+        ):
+            chunks.append(chunk)
+
+        raw_output = "".join(chunks)
+        cleaned = re.sub(r'<think>.*?</think>', '', raw_output, flags=re.DOTALL)
+        cleaned = re.sub(r'Thinking\.\.\..*?\.\.\.done thinking\.', '', cleaned, flags=re.DOTALL)
+        json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', cleaned, re.DOTALL)
+        if json_match:
+            cleaned = json_match.group(1)
+            
+        start = cleaned.find('[')
+        end = cleaned.rfind(']')
+        if start >= 0 and end > start:
+            cleaned = cleaned[start:end + 1]
+
+        steps = []
+        try:
+            data = json.loads(cleaned)
+            for item in data:
+                action = item.get("action", "MODIFY")
+                prefix = f"[{action}] "
+                desc = item.get("description", "")
+                steps.append(PlanStep(
+                    file_path=item.get("file_path", ""),
+                    description=f"{prefix}{desc}",
+                ))
+        except Exception as e:
+            log.error("Failed to parse update plan JSON: %s\n%s", e, raw_output)
+
         return steps
 
     # ── Display Helpers ───────────────────────────────────────────────

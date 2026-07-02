@@ -22,6 +22,7 @@ from core.llm_client import LLMClient
 from core.planners.master_planner import MasterPlanner
 from core.coder import Coder
 from core.runner import Runner, ErrorParser
+from core.analyzer import StaticAnalyzer
 from core.fixer import Fixer
 from core.context import SmartChunker
 from core.brain.project_brain import ProjectBrain
@@ -365,29 +366,45 @@ class Orchestrator:
                             install_res.error or install_res.stderr, "requirements.txt"
                         )
 
-            # ── Phase 3: Syntax check ALL .py files and fix errors ───
-            await self.ws.send_status("verifying", "Phase 3: Running syntax checks on all files...")
-            py_files = [s.file_path for s in self.state.plan_steps if s.file_path.endswith(".py")]
+            # ── Phase 3: Deep Semantic Analysis ───
+            await self.ws.send_status("verifying", "Phase 3: Installing deep semantic analysis tools...")
+            
+            analyzer = StaticAnalyzer(self.runner)
+            await analyzer.install_tools()
 
-            for py_file in py_files:
+            max_fix_attempts = 5
+            for attempt in range(max_fix_attempts):
                 if self._cancel_requested:
                     break
 
-                full_path = self.workspace_dir / py_file
-                if not full_path.exists():
-                    continue
+                await self.ws.send_status("verifying", f"Running Ruff (Syntax & Linting) - Attempt {attempt+1}/{max_fix_attempts}...")
+                ruff_errors = await analyzer.run_ruff()
+                if ruff_errors:
+                    await self.ws.send_error(f"Ruff found {len(ruff_errors)} syntax/linting errors.", "Ruff")
 
-                syntax_result = await self.runner.syntax_check(py_file)
-                if syntax_result.success:
-                    await self.ws.send_status("verified", f"✓ {py_file} — syntax OK")
-                else:
-                    await self.ws.send_error(syntax_result.error, py_file)
-                    await self.ws.send_status("fixing", f"Fixing syntax error in {py_file}...")
-                    fixed = await self._auto_fix(py_file, syntax_result.error, verify_execution=False)
-                    if fixed:
-                        await self.ws.send_status("fixed", f"✓ {py_file} — syntax fixed")
-                    else:
-                        await self.ws.send_error(f"Could not fix syntax in {py_file}", py_file)
+                await self.ws.send_status("verifying", f"Running Pyright (Type Checking) - Attempt {attempt+1}/{max_fix_attempts}...")
+                pyright_errors = await analyzer.run_pyright()
+                if pyright_errors:
+                    await self.ws.send_error(f"Pyright found {len(pyright_errors)} architectural/type errors.", "Pyright")
+
+                await self.ws.send_status("verifying", f"Running Semgrep (Security & Logic) - Attempt {attempt+1}/{max_fix_attempts}...")
+                semgrep_errors = await analyzer.run_semgrep()
+                if semgrep_errors:
+                    await self.ws.send_error(f"Semgrep found {len(semgrep_errors)} logical/security errors.", "Semgrep")
+
+                if not ruff_errors and not pyright_errors and not semgrep_errors:
+                    await self.ws.send_status("verified", "✓ Deep Semantic Analysis passed — zero errors found.")
+                    break
+                
+                error_prompt = analyzer.build_fix_prompt(ruff_errors, pyright_errors, semgrep_errors)
+                await self.ws.send_status("fixing", f"Fixing all semantic errors with LLM (Attempt {attempt+1}/{max_fix_attempts})...")
+                
+                # The Fixer agent can edit any file. We pass main.py as a dummy target, but the prompt tells it the real files.
+                fixed = await self._auto_fix("main.py", error_prompt, verify_execution=False)
+                
+                if not fixed:
+                    await self.ws.send_error("Fixer agent gave up or hit max iterations.", "Static Analyzer")
+                    break
 
             # ── Phase 4: QA Agent tests main.py ──────────────────────
             main_path = self.workspace_dir / "main.py"
@@ -699,11 +716,37 @@ class Orchestrator:
         self.state.chat_history.append({"role": "user", "content": prompt})
         self.state.save(self.workspace_dir / "project_state.json")
 
-        await self.ws.send_status("fixing", "Analyzing user feedback...")
+        await self.ws.send_status("planning", "Analyzing user request intent...")
         
-        target_file = self._resolve_target_file(prompt)
-        await self.ws.send_status("fixing", f"Targeting {target_file} for fix...")
+        # Determine intent
+        intent_prompt = f"""You must classify the following user request into one of two categories:
+1. "bug_fix": The user is pasting an error, traceback, or asking to fix a broken feature/bug.
+2. "feature_update": The user is asking to add a new feature, change the architecture, or implement something new.
 
+Respond with exactly one word: either "bug_fix" or "feature_update".
+
+USER REQUEST:
+{prompt}
+"""
+        try:
+            intent_raw = await self.llm.generate(prompt=intent_prompt, system="You are an intent classifier. Respond with ONE word.")
+            intent = intent_raw.strip().lower()
+            # fallback to feature update if LLM babbles
+            if "bug" in intent or "fix" in intent or "error" in intent:
+                is_feature = False
+            else:
+                is_feature = True
+        except Exception:
+            is_feature = True  # default to feature if LLM fails here
+            
+        if is_feature:
+            await self.ws.send_status("planning", "Request classified as Feature Update. Generating new plan...")
+            return await self._update_project(prompt)
+
+        # Fall back to the original bug fix logic
+        await self.ws.send_status("fixing", "Request classified as Bug Fix. Targeting file...")
+        target_file = self._resolve_target_file(prompt)
+        
         fixed = await self._auto_fix(target_file, f"User Feedback/Request:\n{prompt}", verify_execution=True)
         
         if fixed:
@@ -714,6 +757,48 @@ class Orchestrator:
             
         self.state.save(self.workspace_dir / "project_state.json")
         return {"success": True}
+
+    async def _update_project(self, prompt: str) -> dict:
+        """Handle a feature update request by generating a new update plan."""
+        if not self.planner:
+            from core.planners.master_planner import MasterPlanner
+            self.planner = MasterPlanner(self.llm)
+            
+        try:
+            async def send_token(t):
+                await self.ws.send_stream("token", t)
+            async def send_thinking(t):
+                await self.ws.send_stream("thinking", t)
+                
+            update_steps = await self.planner.generate_update_plan(
+                prompt=prompt,
+                state=self.state,
+                on_token=send_token,
+                on_thinking=send_thinking
+            )
+        except Exception as e:
+            log.error(f"Update plan failed: {e}", exc_info=True)
+            return {"success": False, "error": f"Failed to generate update plan: {e}"}
+            
+        if not update_steps:
+            return {"success": False, "error": "No update steps generated"}
+            
+        # Append steps to state
+        start_step = len(self.state.plan_steps) + 1
+        for i, step in enumerate(update_steps):
+            step.step_number = start_step + i
+            self.state.plan_steps.append(step)
+            
+        # Reset plan_approved to False so the user can review the new steps
+        self.state.plan_approved = False
+        self.state.status = "planning_completed"
+        self.state.save(self.workspace_dir / "project_state.json")
+        
+        # Send updated plan to frontend
+        await self.ws.send_plan(self.state.to_api_dict())
+        
+        return {"success": True}
+
 
     def _resolve_target_file(self, text: str) -> str:
         """Resolve the target file from user-pasted error text."""

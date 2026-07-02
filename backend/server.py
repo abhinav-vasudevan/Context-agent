@@ -252,6 +252,15 @@ async def list_files():
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time communication with the frontend."""
     await ws_manager.connect(websocket)
+    
+    # Auto-resume semantic analysis if project is already completed
+    if orchestrator.state and orchestrator.state.status == "completed":
+        if not getattr(orchestrator, "_executing", False):
+            async def auto_run():
+                await asyncio.sleep(0.5) # Wait for WS connection to stabilize
+                await orchestrator.execute_all()
+            asyncio.create_task(auto_run())
+
     try:
         while True:
             data = await websocket.receive_json()

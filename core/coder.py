@@ -145,6 +145,40 @@ class Coder:
                 action_taken = True
                 final_code = code
 
+            # Check for <edit_file>
+            edit_matches = list(re.finditer(r'<edit_file\s+path=["\']([^"\']+)["\']>(.*?)</edit_file>', raw_output, re.IGNORECASE | re.DOTALL))
+            for m in edit_matches:
+                fpath = m.group(1).strip()
+                edit_blocks = m.group(2)
+                full_path = self.workspace / fpath
+                
+                if not full_path.exists():
+                    system_reply += f"--- Edit Failed: {fpath} does not exist ---\n"
+                    action_taken = True
+                    continue
+                    
+                content = full_path.read_text(encoding="utf-8")
+                blocks = re.findall(r'<<<<<<<\s*SEARCH\n(.*?)\n=======\n(.*?)\n>>>>>>>\s*REPLACE', edit_blocks, re.DOTALL)
+                
+                if not blocks:
+                    system_reply += f"--- Edit Failed for {fpath}: No valid SEARCH/REPLACE blocks found ---\n"
+                    action_taken = True
+                    continue
+                    
+                success_count = 0
+                for search_text, replace_text in blocks:
+                    if search_text in content:
+                        content = content.replace(search_text, replace_text)
+                        success_count += 1
+                    else:
+                        system_reply += f"--- Edit Warning for {fpath}: Could not find exact SEARCH block. Make sure to copy the EXACT lines. ---\n"
+                        
+                if success_count > 0:
+                    full_path.write_text(content, encoding="utf-8")
+                    system_reply += f"--- Successfully edited {fpath} ({success_count}/{len(blocks)} blocks applied) ---\n"
+                    final_code = content
+                action_taken = True
+
             # Check for <run_command>
             run_matches = list(re.finditer(r'<run_command>\s*(.*?)\s*</run_command>', raw_output, re.IGNORECASE | re.DOTALL))
             for m in run_matches:
@@ -166,7 +200,7 @@ class Coder:
                 break
                 
             if not action_taken:
-                system_reply += "You did not use <write_file>, <run_command>, or <done>. Please output valid XML tags to proceed.\n"
+                system_reply += "You did not use <write_file>, <edit_file>, <run_command>, or <done>. Please output valid XML tags to proceed.\n"
                 
             current_prompt += system_reply
 

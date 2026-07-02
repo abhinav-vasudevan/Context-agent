@@ -227,18 +227,28 @@ AVAILABLE TOOLS:
 You must use the following XML tools to interact with the workspace:
 
 1. `<write_file path="path/to/file.py">`
-Use this to write the complete content of a new or existing file.
+Use this to write the complete content of a new file, or to completely overwrite an existing file.
 Format:
 <write_file path="core/math.py">
 def add(a, b):
     return a + b
 </write_file>
 
-2. `<run_command>`
+2. `<edit_file path="path/to/file.py">`
+Use this to apply precise SEARCH/REPLACE blocks to an existing file without completely overwriting it.
+Format inside the tag:
+<<<<<<< SEARCH
+[exact lines to replace]
+=======
+[new lines]
+>>>>>>> REPLACE
+`</edit_file>`
+
+3. `<run_command>`
 Use this to securely execute shell commands in the project workspace (e.g. `pytest`, `python -m unittest`, `pip install`).
 Format: `<run_command>pytest tests/test_api.py</run_command>`. The system will reply with the output.
 
-3. `<done>`
+4. `<done>`
 Use this ONLY when you have fully implemented the requested code AND verified it runs correctly (if tests are possible).
 
 ABSOLUTE RULES — violating ANY means failure:
@@ -249,6 +259,14 @@ ABSOLUTE RULES — violating ANY means failure:
 5. NEVER use placeholders like `# ... existing code ...`. You MUST write out every single line of code so the file can be saved directly.
 6. MANDATORY: Ensure all required standard libraries (like `requests`, `json`) are explicitly imported at the top of the file.
 7. MANDATORY: NEVER use hardcoded dummy variables.
+
+PYTHON & SECURITY STANDARDS (Zero Tolerance):
+1. TYPING (Python < 3.9): ALWAYS import and use `Tuple`, `List`, `Dict`, `Callable`, `Optional` from `typing`. NEVER use lowercase `tuple`, `list`, `callable` for type hints.
+2. SECURITY: NEVER use `shell=True` in `subprocess.run` or `Popen`. Use `shell=False` and pass a list of arguments (e.g., `["/bin/bash", "-c", "cmd"]`).
+3. QUALITY: Do NOT leave empty `f-strings` or unused imports/variables (passes Ruff checks).
+4. STRING FORMATTING: When using Python's `.format()` on a string containing JSON or braces, you MUST double brace the JSON (`{{` and `}}`) to prevent `KeyError`.
+5. SEMGREP: For safe dynamic URLs in `urllib`, append `# nosemgrep` comments to bypass false positives.
+6. SANDBOX PATHS: You are operating in a sandboxed directory. NEVER use absolute paths like `/workspace/...`. ALWAYS use relative paths (e.g., `./src/main.py`) when reading or writing files.
 
 Output your valid XML tools now."""
 
@@ -413,6 +431,14 @@ CRITICAL RULES:
 1. NEVER guess! If you see an error in `main.py` calling `src/utils.py`, use `<view_file>src/utils.py</view_file>` to see the actual function signature before trying to fix it.
 2. If `<edit_file>` fails due to a bad SEARCH block, try again or use the fallback: `<edit_file path="..." fallback="true"> [Full file contents] </edit_file>`.
 3. Only use `<done>` when you have actually made edits using `<edit_file>`.
+
+PYTHON & SECURITY STANDARDS (Zero Tolerance):
+1. TYPING (Python < 3.9): ALWAYS import and use `Tuple`, `List`, `Dict`, `Callable`, `Optional` from `typing`. NEVER use lowercase `tuple`, `list`, `callable` for type hints.
+2. SECURITY: NEVER use `shell=True` in `subprocess.run` or `Popen`. Use `shell=False` and pass a list of arguments (e.g., `["/bin/bash", "-c", "cmd"]`).
+3. QUALITY: Do NOT leave empty `f-strings` or unused imports/variables (passes Ruff checks).
+4. STRING FORMATTING: When using Python's `.format()` on a string containing JSON or braces, you MUST double brace the JSON (`{{` and `}}`) to prevent `KeyError`.
+5. SEMGREP: For safe dynamic URLs in `urllib`, append `# nosemgrep` comments to bypass false positives.
+6. SANDBOX PATHS: You are operating in a sandboxed directory. NEVER use absolute paths like `/workspace/...`. ALWAYS use relative paths (e.g., `./src/main.py`) when reading or writing files.
 
 EXAMPLE WORKFLOW:
 <view_file>src/main.py</view_file>
