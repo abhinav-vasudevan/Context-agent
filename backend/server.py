@@ -81,6 +81,10 @@ class PermissionResponse(BaseModel):
 class LoadProjectRequest(BaseModel):
     workspace_path: str
 
+class IngestRequest(BaseModel):
+    name: str
+    path: str
+
 class FollowupRequest(BaseModel):
     text: str
 
@@ -141,7 +145,20 @@ async def load_project(req: LoadProjectRequest):
     """Load an existing project."""
     result = await orchestrator.load_project(req.workspace_path)
     if not result["success"]:
-        raise HTTPException(status_code=404, detail=result.get("error", "Project not found"))
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to load project"))
+    return result
+
+
+@app.post("/api/project/ingest")
+async def ingest_project(req: IngestRequest):
+    """Create a project from an existing codebase path and ingest it."""
+    result = await orchestrator.create_project(name=req.name, prompt="", target_dir=req.path)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to setup workspace for ingestion"))
+    
+    # Trigger ingestion in background so UI can transition and listen to progress events
+    import asyncio
+    asyncio.create_task(orchestrator.ingest_codebase())
     return result
 
 
@@ -159,7 +176,8 @@ async def get_architecture_graph():
     if not getattr(orchestrator, 'brain', None) or not orchestrator.brain.graph:
         return {"success": False, "graph": {"nodes": [], "links": []}}
     try:
-        graph_data = orchestrator.brain.graph.get_graph_data()
+        project_name = orchestrator.state.project_name if orchestrator.state else None
+        graph_data = orchestrator.brain.graph.get_graph_data(project_name=project_name)
         return {"success": True, "graph": graph_data}
     except Exception as e:
         return {"success": False, "error": str(e), "graph": {"nodes": [], "links": []}}
@@ -202,6 +220,14 @@ async def execute_all():
     return {"status": "execution_started"}
 
 
+@app.post("/api/ingest")
+async def ingest_codebase():
+    """Trigger codebase ingestion pipeline."""
+    # Run ingestion in background so API responds immediately
+    asyncio.create_task(orchestrator.ingest_codebase())
+    return {"status": "ingestion_started"}
+
+
 @app.post("/api/execute/step/{step_number}")
 async def execute_step(step_number: int):
     """Execute a specific plan step."""
@@ -213,6 +239,20 @@ async def execute_step(step_number: int):
 async def send_process_input(req: InputRequest):
     """Send input to the running process."""
     result = await orchestrator.send_input(req.text)
+    return result
+
+
+@app.post("/api/execute/retry")
+async def retry_execution():
+    """Retry execution after a paused state (e.g. max fix attempts reached)."""
+    result = await orchestrator.retry_execution()
+    return result
+
+
+@app.post("/api/execute/skip")
+async def skip_execution():
+    """Skip the paused step and continue to the next phase."""
+    result = await orchestrator.skip_execution()
     return result
 
 

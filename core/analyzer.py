@@ -1,91 +1,108 @@
-import json
-import logging
 import asyncio
+import logging
 from pathlib import Path
-from typing import Dict, List, Any, Tuple
-from core.runner import Runner, RunResult
+from typing import Tuple, List, Optional
+from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
 
-class StaticAnalyzer:
+@dataclass
+class VerificationResult:
+    success: bool
+    errors: List[str]
+    tool_name: str
+
+class IncrementalVerifier:
     """
-    Runs deep semantic static analysis tools (Ruff, Pyright, Semgrep) 
-    and parses their JSON output for the Fixer agent.
+    Runs scoped incremental verification using Ruff (linting) and Pyright (type checking).
+    Designed to run on a per-file or per-sprint basis, leveraging the Contract-First
+    stubs to prevent false-positive ImportErrors.
     """
-    
-    def __init__(self, runner: Runner):
-        self.runner = runner
-        self.workspace = runner.workspace
-
-    async def install_tools(self) -> bool:
-        """Install the required analysis tools into the project venv."""
-        log.info("Analyzer: Installing ruff, pyright, and semgrep...")
-        result = await self.runner.run_shell_command("pip install ruff pyright semgrep", timeout=300)
-        return result.success
-
-    async def run_ruff(self) -> List[Dict[str, Any]]:
-        """Run Ruff to catch syntax and linting errors."""
-        log.info("Analyzer: Running Ruff...")
-        # Ruff outputs JSON format. We ignore exit code since 1 means errors found.
-        result = await self.runner.run_shell_command("ruff check . --output-format json", timeout=60)
-        try:
-            errors = json.loads(result.stdout)
-            return errors if isinstance(errors, list) else []
-        except json.JSONDecodeError:
-            log.warning("Ruff output was not valid JSON. Stderr: %s", result.stderr)
-            return []
-
-    async def run_pyright(self) -> List[Dict[str, Any]]:
-        """Run Pyright to catch deep semantic type and logic errors."""
-        log.info("Analyzer: Running Pyright...")
-        result = await self.runner.run_shell_command("pyright . --outputjson", timeout=120)
-        try:
-            data = json.loads(result.stdout)
-            return data.get("generalDiagnostics", [])
-        except json.JSONDecodeError:
-            log.warning("Pyright output was not valid JSON. Stderr: %s", result.stderr)
-            return []
-            
-    async def run_semgrep(self) -> List[Dict[str, Any]]:
-        """Run Semgrep to catch security and complex AST patterns."""
-        log.info("Analyzer: Running Semgrep...")
-        # We can run without explicit rules, or use default rules. Semgrep --json.
-        # But semgrep needs rules. `semgrep scan --config auto --json`
-        result = await self.runner.run_shell_command("semgrep scan --config auto --no-git-ignore --exclude venv --exclude .venv --exclude '*.md' --exclude '*.txt' --exclude '*.json' --json", timeout=120)
-        try:
-            data = json.loads(result.stdout)
-            return data.get("results", [])
-        except json.JSONDecodeError:
-            log.warning("Semgrep output was not valid JSON. Stderr: %s", result.stderr)
-            return []
-
-    def build_fix_prompt(self, ruff_errors: List[Dict], pyright_errors: List[Dict], semgrep_errors: List[Dict]) -> str:
-        """Format the aggregated JSON errors into a clean prompt string for the Fixer."""
-        lines = []
+    def __init__(self, workspace: Path, venv_path: Optional[Path] = None):
+        self.workspace = workspace
+        self.venv_path = venv_path
         
-        if ruff_errors:
-            lines.append("### Ruff Linting & Syntax Errors:")
-            for err in ruff_errors:
-                file_path = err.get("location", {}).get("row", "unknown")
-                filename = err.get("filename", "unknown")
-                msg = err.get("message", "Unknown error")
-                lines.append(f"- File `{filename}`, Line {file_path}: {msg}")
+    def _get_tool_cmd(self, tool: str) -> str:
+        """Get path to a tool (ruff or pyright) in the venv, if it exists."""
+        if self.venv_path and self.venv_path.exists():
+            import os
+            bin_dir = "Scripts" if os.name == 'nt' else "bin"
+            tool_exe = f"{tool}.exe" if os.name == 'nt' else tool
+            tool_path = self.venv_path / bin_dir / tool_exe
+            if tool_path.exists():
+                return str(tool_path)
+        return tool
+
+    async def verify_file(self, file_path: str) -> Tuple[bool, str]:
+        """
+        Run Ruff and Pyright on a specific file.
+        Returns (success, error_message).
+        """
+        full_path = self.workspace / file_path
+        if not full_path.exists():
+            return False, f"File not found: {file_path}"
+            
+        # 1. Run Ruff (Linter)
+        ruff_res = await self._run_ruff(str(full_path))
+        if not ruff_res.success:
+            return False, f"Ruff Lint Errors:\n{chr(10).join(ruff_res.errors)}"
+            
+        # 2. Run Pyright (Type Checker)
+        pyright_res = await self._run_pyright(str(full_path))
+        if not pyright_res.success:
+            return False, f"Pyright Type Errors:\n{chr(10).join(pyright_res.errors)}"
+            
+        return True, ""
+        
+    async def _run_ruff(self, target_path: str) -> VerificationResult:
+        cmd = [self._get_tool_cmd("ruff"), "check", target_path]
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(self.workspace)
+            )
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode == 0:
+                return VerificationResult(True, [], "ruff")
                 
-        if pyright_errors:
-            lines.append("\n### Pyright Semantic Type Errors:")
-            for err in pyright_errors:
-                filename = err.get("file", "unknown")
-                # Pyright gives a range, we grab the start line (0-indexed usually, so +1)
-                line = err.get("range", {}).get("start", {}).get("line", 0) + 1
-                msg = err.get("message", "Unknown error")
-                lines.append(f"- File `{filename}`, Line {line}: {msg}")
+            out_str = stdout.decode("utf-8", errors="replace").strip()
+            # Basic cleanup of Ruff output
+            errors = [line for line in out_str.split("\n") if line.strip() and not line.startswith("Found")]
+            return VerificationResult(False, errors, "ruff")
+        except FileNotFoundError:
+            # Tool not installed, ignore for now (should be installed by orchestrator setup ideally)
+            log.warning("Ruff not found. Skipping linting.")
+            return VerificationResult(True, [], "ruff")
+        except Exception as e:
+            log.error(f"Failed to run Ruff: {e}")
+            return VerificationResult(False, [str(e)], "ruff")
+
+    async def _run_pyright(self, target_path: str) -> VerificationResult:
+        cmd = [self._get_tool_cmd("pyright"), target_path]
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(self.workspace)
+            )
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode == 0:
+                return VerificationResult(True, [], "pyright")
                 
-        if semgrep_errors:
-            lines.append("\n### Semgrep Security & Logic Errors:")
-            for err in semgrep_errors:
-                filename = err.get("path", "unknown")
-                line = err.get("start", {}).get("line", "unknown")
-                msg = err.get("extra", {}).get("message", "Unknown error")
-                lines.append(f"- File `{filename}`, Line {line}: {msg}")
+            out_str = stdout.decode("utf-8", errors="replace").strip()
+            errors = [line for line in out_str.split("\n") if "error:" in line.lower()]
+            if not errors:
+                errors = [out_str]
                 
-        return "\n".join(lines)
+            return VerificationResult(False, errors, "pyright")
+        except FileNotFoundError:
+            log.warning("Pyright not found. Skipping type checking.")
+            return VerificationResult(True, [], "pyright")
+        except Exception as e:
+            log.error(f"Failed to run Pyright: {e}")
+            return VerificationResult(False, [str(e)], "pyright")

@@ -176,3 +176,13 @@ class ConnectionManager:
             "type": "plan_update",
             "data": {"steps": plan_steps},
         })
+
+    async def send_progress(self, percent: float, label: str = ""):
+        """Broadcast real-time progress for the dashboard."""
+        await self.broadcast({
+            "type": "progress",
+            "data": {
+                "percent": percent,
+                "label": label,
+            },
+        })

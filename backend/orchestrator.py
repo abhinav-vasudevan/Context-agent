@@ -22,14 +22,20 @@ from core.llm_client import LLMClient
 from core.planners.master_planner import MasterPlanner
 from core.coder import Coder
 from core.runner import Runner, ErrorParser
-from core.analyzer import StaticAnalyzer
 from core.fixer import Fixer
 from core.context import SmartChunker
 from core.brain.project_brain import ProjectBrain
 from core.retrieval.context_engine import ContextEngine
 from core.agents.integration_agent import IntegrationAgent
 from core.agents.summarizer import SummarizerAgent
+from core.agents.architect_agent import ArchitectAgent
+from core.agents.test_generator import TestGeneratorAgent
+from core.checkpoint import CheckpointManager
+from core.analyzer import IncrementalVerifier
+from core.ingestion.ingester import RepositoryIngester
+from core.templates.template_engine import TemplateEngine
 from models.state import ProjectState, StepStatus, PlanStep
+from models.hierarchy import ArchitectureSpec, SubsystemSpec, ModuleSpec
 from backend.ws_manager import ConnectionManager
 
 log = logging.getLogger(__name__)
@@ -61,6 +67,11 @@ class Orchestrator:
         self.context_engine: Optional[ContextEngine] = None
         self.integration_agent: Optional[IntegrationAgent] = None
         self.summarizer: Optional[SummarizerAgent] = None
+        self.architect: Optional[ArchitectAgent] = None
+        self.test_generator: Optional[TestGeneratorAgent] = None
+        self.verifier: Optional[IncrementalVerifier] = None
+        self.ingester: Optional[RepositoryIngester] = None
+        self.template_engine: Optional[TemplateEngine] = None
         
         self.workspace_dir: Optional[Path] = None
 
@@ -76,20 +87,30 @@ class Orchestrator:
         self._executing = False
         self._cancel_requested = False
 
+        # Paused state (V3: Resilient Fixer)
+        self._paused = False
+        self._paused_step: Optional[PlanStep] = None
+        self._paused_file: Optional[str] = None
+        self._retry_event: Optional[asyncio.Event] = None
+        self._skip_requested = False
+
     # ── Project Lifecycle ─────────────────────────────────────────────
 
-    async def create_project(self, name: str, prompt: str = "") -> dict:
+    async def create_project(self, name: str, prompt: str = "", target_dir: str = None) -> dict:
         """Create a new project workspace."""
         self.state = ProjectState()
         self.state.project_name = name
         self.state.original_prompt = prompt
 
         # Create workspace
-        safe_name = "".join(c for c in name if c.isalnum() or c in (' ', '-', '_')).strip().replace(' ', '_')
-        if not safe_name:
-            safe_name = f"project_{uuid.uuid4().hex[:8]}"
+        if target_dir:
+            self.workspace_dir = Path(target_dir).resolve()
+        else:
+            safe_name = "".join(c for c in name if c.isalnum() or c in (' ', '-', '_')).strip().replace(' ', '_')
+            if not safe_name:
+                safe_name = f"project_{uuid.uuid4().hex[:8]}"
+            self.workspace_dir = config.PROJECTS_DIR / safe_name
             
-        self.workspace_dir = config.PROJECTS_DIR / safe_name
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self.state.workspace_path = str(self.workspace_dir)
 
@@ -131,6 +152,12 @@ class Orchestrator:
         self.fixer = Fixer(self.llm, self.state, self.workspace_dir, self.runner, self.coder)
         self.integration_agent = IntegrationAgent(self.llm, self.brain)
         self.summarizer = SummarizerAgent(self.llm)
+        self.architect = ArchitectAgent(self.llm)
+        self.test_generator = TestGeneratorAgent(self.llm)
+        venv_path = Path(self.state.venv_path) if self.state.venv_path else None
+        self.verifier = IncrementalVerifier(self.workspace_dir, venv_path)
+        self.ingester = RepositoryIngester(self.workspace_dir, self.brain, self.summarizer)
+        self.template_engine = TemplateEngine()
 
         self.state.status = "idle"
         self.state.save(self.workspace_dir / "project_state.json")
@@ -164,9 +191,38 @@ class Orchestrator:
         self.fixer = Fixer(self.llm, self.state, self.workspace_dir, self.runner, self.coder)
         self.integration_agent = IntegrationAgent(self.llm, self.brain)
         self.summarizer = SummarizerAgent(self.llm)
+        self.architect = ArchitectAgent(self.llm)
+        self.test_generator = TestGeneratorAgent(self.llm)
+        self.verifier = IncrementalVerifier(self.workspace_dir, venv_path)
+        self.ingester = RepositoryIngester(self.workspace_dir, self.brain, self.summarizer)
+        self.template_engine = TemplateEngine()
 
         await self.ws.send_status("ready", f"Project '{self.state.project_name}' loaded")
         return {"success": True, "project": self.state.to_api_dict()}
+
+    async def ingest_codebase(self) -> dict:
+        """Trigger codebase ingestion for the currently loaded project."""
+        if not self.state or not self.ingester:
+            return {"success": False, "error": "No project loaded"}
+
+        await self.ws.send_status("ingesting", "Starting Codebase Ingestion Pipeline...")
+        
+        def on_status(msg: str):
+            asyncio.create_task(self.ws.send_status("ingesting", msg))
+            
+        def on_progress(current: int, total: int, current_file: str):
+            if total > 0:
+                percent = (current / total) * 100
+                asyncio.create_task(self.ws.send_progress(percent, f"Ingesting: {current_file}"))
+            
+        success = await self.ingester.ingest_repository(on_status=on_status, on_progress=on_progress)
+        
+        if success:
+            await self.ws.send_status("ready", "Codebase ingestion completed successfully.")
+            return {"success": True}
+        else:
+            await self.ws.send_status("error", "Codebase ingestion failed.")
+            return {"success": False, "error": "Ingestion failed"}
 
     # ── Planning ──────────────────────────────────────────────────────
 
@@ -188,73 +244,66 @@ class Orchestrator:
             chunks = SmartChunker.chunk(planning_prompt)
             planning_prompt = chunks[0] + "\n\n[Prompt truncated for planning...]"
 
-        # Phase 1: Architecture Vision (Subsystems)
+        # Determine Complexity / Epics
         self.state.status = "architecting"
-        await self.ws.send_status("planning", "Stage 1: Generating System Vision and Subsystems...")
-
-        arch_chunks = []
-        arch_thinking_chunks = []
-        def on_arch_token(token: str):
-            arch_chunks.append(token)
+        await self.ws.send_status("planning", "Stage 1: Determining complexity and bounded domains (Epics)...")
+        
+        epic_chunks = []
+        def on_epic_token(token: str):
+            epic_chunks.append(token)
             asyncio.ensure_future(self.ws.send_llm_token(token))
-        def on_arch_thinking(token: str):
-            arch_thinking_chunks.append(token)
-            asyncio.ensure_future(self.ws.send_llm_thinking(token))
-
+            
         try:
-            arch_spec = await self.master_planner.generate_vision(planning_prompt, on_token=on_arch_token, on_thinking=on_arch_thinking)
-            await self.ws.send_llm_done("".join(arch_chunks))
-            self.state.chat_history.append({
-                "role": "assistant",
-                "content": "".join(arch_chunks),
-                "thinking": "".join(arch_thinking_chunks)
-            })
-            self.state.save(self.workspace_dir / "project_state.json")
+            epics = await self.master_planner.generate_epic_queue(planning_prompt, on_token=on_epic_token)
+            self.state.epic_queue = epics
+            if epics:
+                self.state.project_scale = epics[0].scale_estimate.value
+            await self.ws.send_llm_done("".join(epic_chunks))
         except Exception as e:
             err_msg = str(e)
-            await self.ws.send_error(f"Vision Generation Error: {err_msg}")
+            await self.ws.send_error(f"Complexity Generation Error: {err_msg}")
             self.state.status = "failed"
             return {"success": False, "error": err_msg}
 
-        # Phase 2: Services and Modules Definition
-        self.state.status = "planning"
-        await self.ws.send_status("planning", "Stage 2: Decomposing into Services and Modules...")
-        
-        svc_chunks = []
-        svc_thinking_chunks = []
-        def on_svc_token(token: str):
-            svc_chunks.append(token)
-            asyncio.ensure_future(self.ws.send_llm_token(token))
-        def on_svc_thinking(token: str):
-            svc_thinking_chunks.append(token)
-            asyncio.ensure_future(self.ws.send_llm_thinking(token))
+        is_massive = self.state.project_scale in ["large", "massive"]
 
-        try:
-            arch_spec = await self.master_planner.generate_services(arch_spec, planning_prompt, on_token=on_svc_token, on_thinking=on_svc_thinking)
-            await self.ws.send_llm_done("".join(svc_chunks))
-            self.state.chat_history.append({
-                "role": "assistant",
-                "content": "".join(svc_chunks),
-                "thinking": "".join(svc_thinking_chunks)
-            })
-            self.state.save(self.workspace_dir / "project_state.json")
-        except Exception as e:
-            err_msg = str(e)
-            await self.ws.send_error(f"Service Generation Error: {err_msg}")
-            self.state.status = "failed"
-            return {"success": False, "error": err_msg}
-
-        # Ingest the full architecture into the Project Brain (Graph + Semantic)
-        await self.ws.send_status("planning", "Stage 3: Ingesting Architecture into Project Brain...")
-        self.brain.ingest_architecture(arch_spec, self.state.project_name)
-        
-        # Save architecture text for display
-        self.state.architecture_text = self.master_planner.format_vision_for_display(arch_spec)
+        if not is_massive:
+            # ── Monolithic Planning for SIMPLE/MEDIUM projects ──
+            await self.ws.send_status("planning", "Project is simple/medium. Generating full architecture...")
+            
+            arch_chunks = []
+            def on_arch_token(token: str):
+                arch_chunks.append(token)
+                asyncio.ensure_future(self.ws.send_llm_token(token))
+                
+            try:
+                arch_spec = await self.master_planner.generate_vision(planning_prompt, on_token=on_arch_token)
+                arch_spec = await self.master_planner.generate_services(arch_spec, planning_prompt, on_token=on_arch_token)
+                self.brain.ingest_architecture(arch_spec, self.state.project_name)
+                self.state.architecture_text = self.master_planner.format_vision_for_display(arch_spec)
+                self.state.plan_steps = self.master_planner.flatten_to_plan_steps(arch_spec)
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        else:
+            # ── JIT Epic Planning for LARGE/MASSIVE projects ──
+            await self.ws.send_status("planning", f"Project is {self.state.project_scale.upper()}. Using JIT Epic Planning...")
+            
+            # Format Epics for display instead of a full architecture
+            lines = [f"# {self.state.project_name} - {self.state.project_scale.upper()} Scale"]
+            lines.append("\nThis is a massive project. It will be built iteratively via the following Epics:\n")
+            for i, epic in enumerate(self.state.epic_queue):
+                lines.append(f"## Epic {i+1}: {epic.name}")
+                lines.append(f"Purpose: {epic.purpose}")
+                lines.append(f"API Contract: {', '.join(epic.public_api_contract)}")
+                if epic.depends_on_epics:
+                    lines.append(f"Depends on: {', '.join(epic.depends_on_epics)}")
+                lines.append("")
+                
+            self.state.architecture_text = "\n".join(lines)
+            self.state.plan_steps = []  # Will be populated JIT during execution
+            
         arch_path = self.workspace_dir / "architecture.md"
         arch_path.write_text(self.state.architecture_text, encoding="utf-8")
-        
-        # Convert hierarchical spec to linear steps for execution
-        self.state.plan_steps = self.master_planner.flatten_to_plan_steps(arch_spec)
         
         # Generate simple plan_text string for backward compatibility with frontend
         plan_lines = []
@@ -316,26 +365,120 @@ class Orchestrator:
         self._cancel_requested = False
         self.state.status = "executing"
 
+        ckpt = CheckpointManager.load(self.workspace_dir)
+        resume_epic_id = None
+        if ckpt:
+            resume_epic_id = ckpt.get("current_epic_id")
+            await self.ws.send_status("resuming", "Resuming from checkpoint...")
+
         try:
-            # ── Phase 1: Write ALL files ──────────────────────────────
-            await self.ws.send_status("executing", "Phase 1: Generating all files using V2 Brain Context...")
-            for i, step in enumerate(self.state.plan_steps):
+            epics_to_run = self.state.epic_queue if self.state.project_scale in ["large", "massive"] else [None]
+            
+            for epic_idx, epic in enumerate(epics_to_run):
                 if self._cancel_requested:
-                    await self.ws.send_status("cancelled", "Execution cancelled by user")
                     break
+                    
+                if epic:
+                    if resume_epic_id and epic.id != resume_epic_id:
+                        continue
+                    resume_epic_id = None
+                    
+                    self.state.current_epic_id = epic.id
+                    await self.ws.send_status("executing", f"--- Epic {epic_idx+1}/{len(epics_to_run)}: {epic.name} ---")
+                    
+                    # JIT Sprint Planning for this Epic
+                    await self.ws.send_status("planning", f"JIT Planning for {epic.name}...")
+                    
+                    def on_sprint_token(token: str):
+                        asyncio.ensure_future(self.ws.send_llm_token(token))
+                        
+                    epic = await self.master_planner.generate_sprint_plan(
+                        epic, 
+                        self.state.get_file_registry_string(), 
+                        on_token=on_sprint_token
+                    )
+                    
+                    # Flatten just this epic to plan steps
+                    arch_spec = ArchitectureSpec(name=epic.name, subsystems=[epic.subsystem])
+                    self.state.plan_steps = self.master_planner.flatten_to_plan_steps(arch_spec)
+                    
+                    # Send updated plan to UI
+                    plan_data = [
+                        {"step_number": s.step_number, "title": s.title, "file_path": s.file_path, "status": s.status.value}
+                        for s in self.state.plan_steps
+                    ]
+                    await self.ws.send_plan_update(plan_data)
+                    self.state.save(self.workspace_dir / "project_state.json")
 
-                if step.status == StepStatus.COMPLETED:
-                    continue
+                # ── Phase 0: Skeleton Scaffolding (Contract-First) ──────────────
+                uncompleted_steps = [s for s in self.state.plan_steps if s.status != StepStatus.COMPLETED]
+                if uncompleted_steps:
+                    await self.ws.send_status("scaffolding", "Phase 0: Generating Contract-First skeleton stubs...")
+                    
+                    # Convert PlanSteps to ModuleSpecs for ArchitectAgent, or use templates
+                    modules = []
+                    for step in uncompleted_steps:
+                        if step.file_path.endswith(".py"):
+                            template_name = self.template_engine.get_template_for_file(step.file_path)
+                            if template_name:
+                                # Provide context for template rendering
+                                entity_name = Path(step.file_path).stem.replace("_model", "").replace("_service", "").replace("_controller", "").replace("_api", "").title().replace("_", "")
+                                context = {
+                                    "module_name": Path(step.file_path).stem,
+                                    "entity_name": entity_name
+                                }
+                                rendered = self.template_engine.render(template_name, context)
+                                if rendered:
+                                    full_path = self.workspace_dir / step.file_path
+                                    full_path.parent.mkdir(parents=True, exist_ok=True)
+                                    full_path.write_text(rendered, encoding="utf-8")
+                                    await self.ws.send_file_update(step.file_path, rendered)
+                                    continue # Skip Architect for this file since template succeeded
+                            
+                            # Fallback to ArchitectAgent for unique files
+                            modules.append(ModuleSpec(name=step.title, file_path=step.file_path, description=step.description))
+                            
+                    if modules:
+                        def on_stub_token(token: str):
+                            asyncio.ensure_future(self.ws.send_llm_token(token))
+                        
+                        stubs = await self.architect.generate_stubs(modules, on_token=on_stub_token)
+                        for file_path, content in stubs.items():
+                            full_path = self.workspace_dir / file_path
+                            full_path.parent.mkdir(parents=True, exist_ok=True)
+                            full_path.write_text(content, encoding="utf-8")
+                            await self.ws.send_file_update(file_path, content)
+                            
+                        # ── Phase 8: Generate TDD Tests ──
+                        await self.ws.send_status("scaffolding", "Generating TDD tests for stubs...")
+                        tests = await self.test_generator.generate_tests(stubs, on_token=on_stub_token)
+                        for test_file_path, test_content in tests.items():
+                            full_path = self.workspace_dir / test_file_path
+                            full_path.parent.mkdir(parents=True, exist_ok=True)
+                            full_path.write_text(test_content, encoding="utf-8")
+                            await self.ws.send_file_update(test_file_path, test_content)
+                            
+                        await self.ws.send_status("scaffolding", "Skeleton scaffolding and TDD generation complete.")
 
-                self.state.current_step = i
-                result = await self._execute_step(step)
+                # ── Phase 1: Write ALL files ──────────────────────────────
+                await self.ws.send_status("executing", "Phase 1: Generating implementation logic...")
+                for i, step in enumerate(self.state.plan_steps):
+                    if self._cancel_requested:
+                        await self.ws.send_status("cancelled", "Execution cancelled by user")
+                        break
 
-                if not result["success"] and not result.get("continued", False):
-                    break
+                    if step.status == StepStatus.COMPLETED:
+                        continue
 
-            all_written = all(s.status == StepStatus.COMPLETED for s in self.state.plan_steps)
-            if not all_written:
-                self.state.status = "paused"
+                    self.state.current_step = i
+                    result = await self._execute_step(step)
+
+                    if not result["success"] and not result.get("continued", False):
+                        break
+
+                all_written = all(s.status == StepStatus.COMPLETED for s in self.state.plan_steps)
+                if not all_written:
+                    self.state.status = "paused"
                 await self.ws.send_status("paused", "File generation paused due to error.")
                 self.state.save(self.workspace_dir / "project_state.json")
                 return {"success": False, "project": self.state.to_api_dict()}
@@ -366,45 +509,6 @@ class Orchestrator:
                             install_res.error or install_res.stderr, "requirements.txt"
                         )
 
-            # ── Phase 3: Deep Semantic Analysis ───
-            await self.ws.send_status("verifying", "Phase 3: Installing deep semantic analysis tools...")
-            
-            analyzer = StaticAnalyzer(self.runner)
-            await analyzer.install_tools()
-
-            max_fix_attempts = 5
-            for attempt in range(max_fix_attempts):
-                if self._cancel_requested:
-                    break
-
-                await self.ws.send_status("verifying", f"Running Ruff (Syntax & Linting) - Attempt {attempt+1}/{max_fix_attempts}...")
-                ruff_errors = await analyzer.run_ruff()
-                if ruff_errors:
-                    await self.ws.send_error(f"Ruff found {len(ruff_errors)} syntax/linting errors.", "Ruff")
-
-                await self.ws.send_status("verifying", f"Running Pyright (Type Checking) - Attempt {attempt+1}/{max_fix_attempts}...")
-                pyright_errors = await analyzer.run_pyright()
-                if pyright_errors:
-                    await self.ws.send_error(f"Pyright found {len(pyright_errors)} architectural/type errors.", "Pyright")
-
-                await self.ws.send_status("verifying", f"Running Semgrep (Security & Logic) - Attempt {attempt+1}/{max_fix_attempts}...")
-                semgrep_errors = await analyzer.run_semgrep()
-                if semgrep_errors:
-                    await self.ws.send_error(f"Semgrep found {len(semgrep_errors)} logical/security errors.", "Semgrep")
-
-                if not ruff_errors and not pyright_errors and not semgrep_errors:
-                    await self.ws.send_status("verified", "✓ Deep Semantic Analysis passed — zero errors found.")
-                    break
-                
-                error_prompt = analyzer.build_fix_prompt(ruff_errors, pyright_errors, semgrep_errors)
-                await self.ws.send_status("fixing", f"Fixing all semantic errors with LLM (Attempt {attempt+1}/{max_fix_attempts})...")
-                
-                # The Fixer agent can edit any file. We pass main.py as a dummy target, but the prompt tells it the real files.
-                fixed = await self._auto_fix("main.py", error_prompt, verify_execution=False)
-                
-                if not fixed:
-                    await self.ws.send_error("Fixer agent gave up or hit max iterations.", "Static Analyzer")
-                    break
 
             # ── Phase 4: QA Agent tests main.py ──────────────────────
             main_path = self.workspace_dir / "main.py"
@@ -415,6 +519,7 @@ class Orchestrator:
             # ── Done ─────────────────────────────────────────────────
             self.state.status = "completed"
             self.state.save(self.workspace_dir / "project_state.json")
+            CheckpointManager.clear(self.workspace_dir)
             await self.ws.send_status("completed", "All phases completed successfully!")
 
             usage = self.llm.get_usage()
@@ -475,8 +580,17 @@ class Orchestrator:
         def on_thinking(token: str):
             asyncio.ensure_future(self.ws.send_llm_thinking(token))
 
-        # We pass context_text directly using the new v2 code generator
-        success, error = await self.coder.generate_code_v2(step, context_text, on_token=on_token, on_thinking=on_thinking)
+        # Read stub if it exists (from Phase 0)
+        stub_content = None
+        file_path = self.workspace_dir / step.file_path
+        if file_path.exists():
+            stub_content = file_path.read_text(encoding="utf-8")
+
+        # We pass context_text and stub_content directly using the new v2 code generator
+        success, error = await self.coder.generate_code_v2(
+            step, context_text, stub_content=stub_content, 
+            on_token=on_token, on_thinking=on_thinking
+        )
         full_output = "".join(llm_chunks)
         await self.ws.send_llm_done(full_output)
 
@@ -509,6 +623,39 @@ class Orchestrator:
                         code_content = file_path.read_text(encoding="utf-8")
                     else:
                         await self.ws.send_error("Failed to fix integration issues.", step.file_path)
+
+            # ── Phase 4: Scoped Incremental Verification (Ruff/Pyright) ──
+            if step.file_path.endswith(".py"):
+                await self.ws.send_status("verifying", f"Running incremental lint/type checks on {step.file_path}...")
+                v_success, v_error = await self.verifier.verify_file(step.file_path)
+                if not v_success:
+                    await self.ws.send_status("fixing", f"Incremental check failed for {step.file_path}. Auto-fixing...")
+                    fixed = await self._auto_fix(step.file_path, v_error, verify_execution=False)
+                    if fixed:
+                        code_content = file_path.read_text(encoding="utf-8")
+                    else:
+                        await self.ws.send_error(f"Failed to fix lint/type errors.", step.file_path)
+
+            # ── Phase 8: Test-First Verification (TDD) ──
+            if step.file_path.endswith(".py"):
+                path_obj = Path(step.file_path)
+                test_file_name = f"test_{path_obj.name}"
+                test_path = path_obj.parent / test_file_name
+                
+                # If a test file was generated in Phase 0, run pytest against it
+                if (self.workspace_dir / test_path).exists():
+                    await self.ws.send_status("verifying", f"Running TDD tests for {step.file_path}...")
+                    test_cmd = f"{self.runner._get_python_cmd()} -m pytest {test_path}"
+                    test_res = await self.runner.run_shell_command(test_cmd)
+                    
+                    if not test_res.success:
+                        await self.ws.send_status("fixing", f"Tests failed for {step.file_path}. Auto-fixing...")
+                        error_msg = f"Pytest Output:\n{test_res.stdout}\n{test_res.stderr}"
+                        fixed = await self._auto_fix(step.file_path, error_msg, verify_execution=False)
+                        if fixed:
+                            code_content = file_path.read_text(encoding="utf-8")
+                        else:
+                            await self.ws.send_error(f"Failed to fix test failures.", step.file_path)
 
             # ── V2: Summarization & Storage ──
             if step.file_path.endswith(".py"):
@@ -551,6 +698,7 @@ class Orchestrator:
         step.status = StepStatus.COMPLETED
         self.state.completed_steps.add(step.step_number)
         self.state.save(self.workspace_dir / "project_state.json")
+        CheckpointManager.save(self.workspace_dir, self.state.current_epic_id, step.step_number, "completed")
         await self.ws.send_step_update(step.step_number, "completed", f"✓ {step.title}")
 
         return {"success": True}
@@ -707,6 +855,28 @@ class Orchestrator:
 
         await self.ws.send_error(f"Max fix attempts ({config.MAX_FIX_ATTEMPTS}) reached.", file_path)
         return False
+
+    async def retry_execution(self) -> dict:
+        """Resume execution after a paused state (user clicked 'Retry')."""
+        if not self._paused:
+            return {"success": False, "error": "System is not paused"}
+        
+        self._skip_requested = False
+        if self._retry_event:
+            self._retry_event.set()
+        
+        return {"success": True, "message": "Retrying..."}
+
+    async def skip_execution(self) -> dict:
+        """Skip the paused step and continue execution (user clicked 'Skip')."""
+        if not self._paused:
+            return {"success": False, "error": "System is not paused"}
+        
+        self._skip_requested = True
+        if self._retry_event:
+            self._retry_event.set()
+        
+        return {"success": True, "message": "Skipping to next phase..."}
 
     async def handle_manual_fix(self, prompt: str) -> dict:
         """Handle a followup request from the user (e.g. 'run the tests' or 'add a login page')."""

@@ -14,6 +14,8 @@ from typing import Optional, List, Dict
 from datetime import datetime
 from dataclasses import dataclass, field, asdict
 
+from models.hierarchy import EpicSpec, ProjectScale
+
 
 class StepStatus(str, Enum):
     """Status of a single plan step."""
@@ -114,6 +116,11 @@ class ProjectState:
     # Input
     original_prompt: str = ""
     architecture_text: str = ""                # raw architecture.md content
+    project_scale: str = "medium"              # simple, medium, large, massive
+
+    # Epics (Phase 1 JIT Planning)
+    epic_queue: List[EpicSpec] = field(default_factory=list)
+    current_epic_id: Optional[str] = None
 
     # Plan
     plan_text: str = ""                        # raw plan.txt content
@@ -228,6 +235,9 @@ class ProjectState:
             "chat_history": self.chat_history,
             "total_llm_calls": self.total_llm_calls,
             "total_tokens_used": self.total_tokens_used,
+            "project_scale": self.project_scale,
+            "epic_queue": [e.to_dict() for e in self.epic_queue],
+            "current_epic_id": self.current_epic_id,
         }
 
     # ── Serialization ─────────────────────────────────────────────────
@@ -287,6 +297,9 @@ class ProjectState:
         return {
             "project_id": self.project_id,
             "project_name": self.project_name,
+            "project_scale": self.project_scale,
+            "epic_queue": [e.to_dict() for e in self.epic_queue],
+            "current_epic_id": self.current_epic_id,
             "original_prompt": self.original_prompt,
             "plan_text": self.plan_text,
             "plan_steps": [
@@ -336,6 +349,13 @@ class ProjectState:
         state = cls()
         state.project_id = data.get("project_id", state.project_id)
         state.project_name = data.get("project_name", "")
+        state.project_scale = data.get("project_scale", "medium")
+        state.current_epic_id = data.get("current_epic_id")
+        
+        # Rebuild Epics
+        for ed in data.get("epic_queue", []):
+            state.epic_queue.append(EpicSpec.from_dict(ed))
+
         state.original_prompt = data.get("original_prompt", "")
         state.plan_text = data.get("plan_text", "")
         state.plan_approved = data.get("plan_approved", False)

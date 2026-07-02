@@ -26,7 +26,7 @@ from typing import Optional, Callable, List
 from core.llm_client import LLMClient
 from models.hierarchy import (
     ArchitectureSpec, SubsystemSpec, ServiceSpec, ModuleSpec,
-    ArchitectureDecisionRecord, NodeStatus,
+    ArchitectureDecisionRecord, NodeStatus, EpicSpec, ProjectScale,
 )
 
 log = logging.getLogger(__name__)
@@ -111,6 +111,31 @@ MANDATORY RULES:
 3. The very last file overall is ALWAYS README.md.
 4. Include a requirements.txt or package.json as needed.
 5. Keep descriptions EXTREMELY short (1 sentence max) to save tokens."""
+
+    COMPLEXITY_SYSTEM_PROMPT = """You are a Principal Software Architect determining the scale of a project.
+Analyze the user's request and classify its complexity.
+
+CRITICAL INSTRUCTION: OUTPUT ONLY THE JSON IMMEDIATELY.
+
+Format:
+{
+  "scale_estimate": "simple | medium | large | massive",
+  "epics": [
+    {
+      "name": "Epic Name",
+      "purpose": "One sentence purpose",
+      "public_api_contract": ["API or Interface 1", "API 2"],
+      "depends_on_epics": ["Epic Name 1"]
+    }
+  ]
+}
+
+SCALING RULES:
+- simple (1-5 files): Single script, calculator. Output EXACTLY 1 Epic.
+- medium (5-30 files): Web app, CLI tool. Output 1-3 Epics.
+- large (30-100 files): Coding agent, full-stack app. Output 3-10 Epics.
+- massive (100+ files): OpenStack, OS, ERP. Output 10+ Epics based on Bounded Domains.
+"""
 
     def __init__(self, llm: LLMClient):
         self.llm = llm
@@ -221,6 +246,101 @@ MANDATORY RULES:
             len(arch.subsystems), len(arch.adrs),
         )
         return arch
+
+    async def generate_epic_queue(
+        self,
+        user_prompt: str,
+        on_token: Optional[Callable] = None,
+        on_thinking: Optional[Callable] = None,
+    ) -> List[EpicSpec]:
+        """
+        Phase 1 (JIT Planning): Determine the project scale and break it into Epics.
+        """
+        log.info("MasterPlanner: generating Epic queue")
+
+        chunks = []
+        async for chunk in self.llm.generate_stream(
+            prompt=f"USER REQUEST:\n{user_prompt}\n\nClassify complexity and generate Epics now.",
+            system=self.COMPLEXITY_SYSTEM_PROMPT,
+            on_token=on_token,
+            on_thinking=on_thinking,
+        ):
+            chunks.append(chunk)
+
+        raw_output = "".join(chunks)
+        cleaned = re.sub(r'<think>.*?</think>', '', raw_output, flags=re.DOTALL)
+        cleaned = re.sub(r'Thinking\.\.\..*?\.\.\.done thinking\.', '', cleaned, flags=re.DOTALL)
+        json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', cleaned, re.DOTALL)
+        if json_match:
+            cleaned = json_match.group(1)
+        
+        cleaned = cleaned.strip()
+        start = cleaned.find('{')
+        end = cleaned.rfind('}')
+        if start >= 0 and end > start:
+            cleaned = cleaned[start:end + 1]
+
+        epics = []
+        try:
+            data = json.loads(cleaned)
+            scale = ProjectScale(data.get("scale_estimate", "medium").lower())
+            for epic_data in data.get("epics", []):
+                epics.append(EpicSpec(
+                    name=epic_data.get("name", "Unknown Epic"),
+                    purpose=epic_data.get("purpose", ""),
+                    public_api_contract=epic_data.get("public_api_contract", []),
+                    depends_on_epics=epic_data.get("depends_on_epics", []),
+                    scale_estimate=scale,
+                ))
+        except Exception as e:
+            log.error("Failed to parse Epic JSON: %s", e)
+            # Fallback to a single Epic
+            epics.append(EpicSpec(name="Core System", purpose="Main implementation", scale_estimate=ProjectScale.MEDIUM))
+
+        return epics
+
+    async def generate_sprint_plan(
+        self,
+        epic: EpicSpec,
+        ast_context: str,
+        on_token: Optional[Callable] = None,
+        on_thinking: Optional[Callable] = None,
+    ) -> EpicSpec:
+        """
+        Phase 1 (JIT Planning): Break a single Epic into detailed Services and Modules.
+        Uses the AST context of previously completed Epics.
+        """
+        log.info("MasterPlanner: generating Sprint plan for Epic %s", epic.name)
+        
+        epic.subsystem = SubsystemSpec(name=epic.name, purpose=epic.purpose)
+        
+        prompt = f"""EPIC TO PLAN:
+Name: {epic.name}
+Purpose: {epic.purpose}
+Expected API Contract: {', '.join(epic.public_api_contract)}
+
+EXISTING SYSTEM CONTEXT (Do not rebuild these, just use them):
+{ast_context}
+
+Generate the detailed services and modules for this Epic only."""
+
+        # Re-use the SERVICES_SYSTEM_PROMPT but wrapped for a single subsystem
+        chunks = []
+        async for chunk in self.llm.generate_stream(
+            prompt=prompt,
+            system=self.SERVICES_SYSTEM_PROMPT,
+            on_token=on_token,
+            on_thinking=on_thinking,
+        ):
+            chunks.append(chunk)
+
+        raw_output = "".join(chunks)
+        # Parse it using the existing logic
+        arch = self._parse_services(raw_output, ArchitectureSpec(name=epic.name, subsystems=[epic.subsystem]))
+        if arch.subsystems:
+            epic.subsystem = arch.subsystems[0]
+            
+        return epic
 
     # ── Stage 2: Service & Module Decomposition ───────────────────────
 

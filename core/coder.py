@@ -34,6 +34,7 @@ class Coder:
         self,
         step: PlanStep,
         context_text: str,
+        stub_content: Optional[str] = None,
         on_token=None,
         on_thinking=None,
     ) -> Tuple[bool, Optional[str]]:
@@ -52,7 +53,14 @@ class Coder:
         log.info("Coder: generating code for step %d (%s) using V2 context", step.step_number, step.file_path)
 
         system_prompt = "You are an elite Software Engineer. You must output the entire file content. Never use placeholders like '# ...'."
-        prompt = f"TASK:\n{step.description}\n\nFILE PATH:\n{step.file_path}\n\nCONTEXT:\n{context_text}\n\nWrite the complete, runnable Python code now."
+        
+        prompt = f"TASK:\n{step.description}\n\nFILE PATH:\n{step.file_path}\n\nCONTEXT:\n{context_text}\n\n"
+        
+        if stub_content:
+            prompt += f"EXISTING SKELETON:\n{stub_content}\n\n"
+            prompt += "Implement the actual logic inside the provided skeleton. You MUST return the complete file."
+        else:
+            prompt += "Write the complete, runnable Python code now."
 
         chunks = []
         try:

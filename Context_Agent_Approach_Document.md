@@ -125,16 +125,29 @@ flowchart LR
 
 ## 4. Solving the Output Bottleneck: The Master Planner (V2)
 
-### 4.1 Hierarchical System Vision
+### 4.1 Hierarchical System Vision & Scale Classification
 
-The system never asks the LLM to write an entire application in one generation. Instead, a dedicated **Master Planner** decomposes the request into a rigid, multi-stage hierarchy:
+The system never asks the LLM to write an entire application in one generation. Instead, a dedicated **Master Planner** categorizes the complexity of the prompt into four scales:
+- **Simple (1-5 files)**: Single scripts, calculators.
+- **Medium (5-30 files)**: Standard web apps, CLI tools.
+- **Large (30-100 files)**: Coding agents, full-stack platforms.
+- **Massive (100+ files)**: Cloud OS, ERPs.
+
+For Large and Massive projects, the planner decomposes the request into a rigid, multi-stage hierarchy:
 1. **Vision**: Deduces overarching architectural constraints.
-2. **Subsystems**: Breaks the system into logical domains (e.g. `Frontend`, `Backend`, `Database`).
-3. **Services & Modules**: Breaks subsystems into concrete files in strict **dependency order**.
+2. **Epics & Subsystems**: Breaks the system into logical domains (e.g. `Compute Fabric`, `Distributed Storage`).
 
-By forcing generation down to **one file at a time**, the system never asks the LLM to exceed its output ceiling.
+### 4.2 JIT (Just-In-Time) Epic Planning
 
-### 4.2 Iterative Update Planning (Solving Evolution)
+If a project is classified as **Massive** (100+ files), generating the entire file plan upfront would cause the LLM context window to overflow and crash. To prevent this, the system dynamically switches to **JIT (Just-In-Time) Epic Planning**.
+1. The user approves the high-level **Architecture Epics**.
+2. The orchestrator takes Epic 1 and plans *only* the specific Services and Modules for that Epic.
+3. It executes (codes, tests, fixes) Epic 1 completely.
+4. It then moves to Epic 2, plans its files, and repeats.
+
+By forcing generation down to **one Epic at a time**, the system never asks the LLM to exceed its output ceiling, allowing for infinite scaling.
+
+### 4.3 Iterative Update Planning (Solving Evolution)
 
 To solve the Evolution Bottleneck (Failure Mode 4), the `MasterPlanner` features a secondary pipeline: `generate_update_plan()`.
 When a user submits a follow-up request on an existing project, the system performs **Intent Routing**:
@@ -280,26 +293,28 @@ Once a plan is approved by the user, the **Builder Agent** executes it. It never
 
 ```mermaid
 flowchart TD
-    Start([For each file in the plan]) --> CC[Context Construction]
+    Start([For each file in the plan]) --> Scaff[Scaffolding / Stubs<br/>Architect Agent generates 10-line skeleton]
+    Scaff --> TestGen[Test Generation<br/>Test Agent writes failing tests]
+    TestGen --> CC[Context Construction]
     CC --> CC1["Inject: user's original goal"]
     CC --> CC2["Inject: instructions specific<br/>to this exact file"]
     CC --> CC3["Inject: AST File Registry<br/>(signatures of files already written)"]
-    CC1 & CC2 & CC3 --> Inv[LLM Invocation<br/>streamed live to UI via WebSocket]
+    CC1 & CC2 & CC3 --> Inv[LLM Invocation<br/>Coder Agent streams live to UI]
     Inv --> Ext[Extraction<br/>parse raw markdown,<br/>pull code block]
     Ext --> Write[Write file to<br/>secure Workspace sandbox]
     Write --> Verify{Verification<br/>passes?}
     Verify -->|No| FixLoop[Self-Healing Loop<br/>see Section 9]
     FixLoop --> Write
     Verify -->|Yes| Next{More files<br/>in plan?}
-    Next -->|Yes| CC
+    Next -->|Yes| Start
     Next -->|No| Done([Project Complete])
 ```
 
 Three details matter here:
 
-1. **Context Construction** is rebuilt fresh for every single file — it never grows unbounded, because it draws on the *compressed* registry rather than the raw, ever-growing codebase.
-2. **LLM Invocation** can route to a local model (`qwen3.6:27b` via Ollama) or hosted providers (Groq, Gemini), through a single resilient client (`llm_client.py`) that handles token estimation, SSE streaming, and exponential backoff.
-3. **Extraction & Surgical Editing**: The Coder agent supports advanced XML tooling. It can either overwrite files with `<write_file>`, or use `<edit_file>` to surgically inject features via `<<<<<<< SEARCH` and `>>>>>>> REPLACE` blocks, entirely preserving the integrity of existing code. This allows the system to seamlessly handle **Iterative Follow-Up Planning** without starting from scratch.
+1. **Scaffolding (Skeleton Generation) first**: Before actual logic is written, the `ArchitectAgent` creates structural "stubs" for every file in the Epic. This populates the AST registry with perfectly accurate class names and function signatures, completely eliminating "Module Not Found" errors when the `CoderAgent` eventually tries to stitch files together.
+2. **Context Construction** is rebuilt fresh for every single file — it never grows unbounded, because it draws on the *compressed* registry rather than the raw, ever-growing codebase.
+3. **Extraction & Surgical Editing**: The Coder agent supports advanced XML tooling. It can either overwrite files with `<write_file>`, or use `<edit_file>` to surgically inject features via `<<<<<<< SEARCH` and `>>>>>>> REPLACE` blocks, entirely preserving the integrity of existing code.
 
 ---
 
@@ -334,6 +349,9 @@ To completely break the context window limitation, the system integrates a **Neo
 When the Context Assembler prepares the prompt for the Coder or Fixer agent, it doesn't blindly inject the AST signatures for the entire repository. Instead, it executes a live graph traversal query (`MATCH (f:File)-[*1..2]-(other_f:File)`) to find the structural nearest neighbors of the file currently being worked on. 
 
 The LLM is only injected with the exact API signatures of files that are topologically connected to its current task. The rest of the repository remains completely hidden, ensuring the context remains mathematically bounded and incredibly cheap, no matter how infinitely large the overall codebase scales.
+
+#### 8.4.1 Neo4j Multi-Tenant Project Isolation
+Because the system uses Neo4j Community Edition (which only supports a single active database), all workspaces are technically stored in the same graph instance. To ensure absolute data isolation, the system uses **Project Namespacing**. Every node ingested into the graph is tied to a `Project` node. When the Context Engine queries for relational context, it strictly filters the traversal: `MATCH (p:Project {name: $project_name})-[*0..]-(n)`. This mathematically guarantees that cross-project data leakage is impossible.
 
 ### 8.5 Behavioral Scaling via Google's Open Knowledge Format (OKF)
 

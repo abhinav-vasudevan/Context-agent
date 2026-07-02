@@ -1,0 +1,13 @@
+"""
+Model definitions for {{ module_name }}.
+"""
+from pydantic import BaseModel
+from typing import Optional, List, Dict, Any
+
+class {{ entity_name }}(BaseModel):
+    id: Optional[str] = None
+    
+    # TODO: Add business logic fields here
+    
+    class Config:
+        orm_mode = True

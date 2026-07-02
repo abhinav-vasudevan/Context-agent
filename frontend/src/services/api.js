@@ -40,6 +40,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ workspace_path: workspacePath }),
     }),
+  ingestCodebase: (name, path) =>
+    request('/api/project/ingest', {
+      method: 'POST',
+      body: JSON.stringify({ name, path }),
+    }),
   getProjectState: () => request('/api/project/state'),
   projectFollowup: (text) => 
     request('/api/project/followup', {
@@ -61,6 +66,8 @@ export const api = {
     request('/api/execute/all', { method: 'POST' }),
   executeStep: (stepNumber) =>
     request(`/api/execute/step/${stepNumber}`, { method: 'POST' }),
+  retryExecution: () => request('/api/execute/retry', { method: 'POST' }),
+  skipExecution: () => request('/api/execute/skip', { method: 'POST' }),
 
   // Process
   sendInput: (text) =>

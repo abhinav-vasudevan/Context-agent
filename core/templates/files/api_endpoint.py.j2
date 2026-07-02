@@ -1,0 +1,22 @@
+"""
+API router for {{ module_name }}.
+"""
+from fastapi import APIRouter, HTTPException, Depends
+from typing import List
+
+router = APIRouter(prefix="/{{ entity_name | lower }}", tags=["{{ entity_name }}"])
+
+@router.get("/")
+async def list_items():
+    # TODO: Implement
+    pass
+
+@router.get("/{item_id}")
+async def get_item(item_id: str):
+    # TODO: Implement
+    pass
+
+@router.post("/")
+async def create_item():
+    # TODO: Implement
+    pass

@@ -49,7 +49,8 @@ TOKEN_BUDGET_SUMMARIES = 10000
 MIN_GENERATION_BUDGET = 10000     # Ensures the LLM always has space to write its response
 
 # ── Agent Settings ────────────────────────────────────────────────────
-MAX_FIX_ATTEMPTS = 5             # Max retries when fixing errors (keep low to avoid rate limit exhaustion)
+MAX_FIX_ATTEMPTS = 15            # Max retries when fixing errors (increased for deep semantic analysis convergence)
+MAX_SEMANTIC_FIX_ATTEMPTS = 10   # Max retries for the post-build semantic analysis loop (Ruff/Pyright/Semgrep)
 MAX_PLAN_RETRIES = 2             # Max retries for plan generation
 SYNTAX_CHECK_TIMEOUT = 10       # Seconds for syntax check subprocess
 PROCESS_RUN_TIMEOUT = 300        # Seconds for running user projects (5 min)

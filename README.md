@@ -33,21 +33,20 @@ Traditional AI coding agents fail on large codebases because they attempt to cra
 
 ## 🏗️ The Complete Flow: From Prompt to Final Project
 
-### Phase 1: Hierarchical & Iterative Planning (V2 Architecture)
-1. **Vision & Subsystems**: The user submits a prompt. The `MasterPlanner` processes it and generates a massive, high-level `ArchitectureSpec`. It breaks the system down into concrete **Subsystems**.
-2. **Service Decomposition**: The planner iterates through each subsystem and breaks it down into individual **Services** and specific **Modules (files)**.
-3. **Plan Flattening**: The nested architecture is flattened into sequential `PlanStep`s (always starting with an empty `main.py` and ending with `requirements.txt` and `README.md`).
-4. **Iterative Follow-Ups**: If the user submits a follow-up prompt on an existing project, the Orchestrator's **Intent Routing** layer uses the LLM to classify if it's a bug fix or a feature request. If it's a feature request, the Master Planner generates an **Update Plan** by reading the existing Graph and appending new surgical steps marked as `[NEW]` (missing files) or `[MODIFY]` (existing files) directly to the queue, entirely preserving previous work!
+### Phase 1: Complexity Analysis & Hierarchical Planning (V2 Architecture)
+1. **Scale Classification**: Before generating a single line of code, the system analyzes the complexity of the prompt and classifies the project into one of four buckets: **Simple** (1-5 files), **Medium** (5-30 files), **Large** (30-100 files), or **Massive** (100+ files, e.g., Cloud OS, ERP).
+2. **Vision & Subsystems**: For Large and Massive projects, the `MasterPlanner` deduces overarching architectural constraints and breaks the system down into concrete **Epics** and **Subsystems**.
+3. **JIT (Just-In-Time) Epic Planning**: To prevent context window overflow on Massive projects, the system does *not* plan all 5,000 files upfront. Instead, it enters a JIT Loop where it asks for approval on the Epics, and then dynamically plans the specific Services and Modules for Epic 1, executes them, and then moves to Epic 2.
+4. **Iterative Follow-Ups**: If the user submits a follow-up prompt on an existing project, the Orchestrator's **Intent Routing** layer classifies if it's a bug fix or a feature request. Feature requests generate an **Update Plan** by reading the existing Graph and appending surgical `[NEW]` or `[MODIFY]` steps to the queue, entirely preserving previous work!
 5. **Approval**: The backend pauses and awaits the user's explicit approval (`/api/plan/approve`) before execution.
 
-### Phase 2: Execution & Code Generation
+### Phase 2: Scaffolding, Testing, & Code Generation
 Once the plan is approved, the `Orchestrator` begins the execution loop step-by-step:
-1. **Context Assembly**: For each file, the `ContextAssembler` builds the LLM prompt. It injects:
-   - The specific instructions for this file.
-   - The **AST File Registry** (filtered dynamically using the Neo4j Graph to only show highly relevant APIs and function signatures from the rest of the project).
-   - Past completed step summaries (retrieved via ChromaDB).
-2. **Code Generation**: The `Coder` agent uses the assembled context and outputs raw code enclosed in strict XML tags (e.g., `<write_file path="...">`).
-3. **Integration**: If the file is a Python module, the Orchestrator automatically generates a prompt to update `main.py` and securely imports the new module.
+1. **Scaffolding (Skeleton Generation)**: The `ArchitectAgent` rapidly generates "stubs" or skeletons for every file in the Epic. These stubs contain only class names and function signatures with `pass` statements. This guarantees perfect imports and prevents "Module Not Found" errors during code generation.
+2. **Test Generation (TDD)**: The `TestGeneratorAgent` reads the empty stubs and generates failing Unit Tests for every module based on the requirements.
+3. **Context Assembly**: For each file, the `ContextAssembler` builds the LLM prompt. It injects the specific instructions and the **AST File Registry** (filtered dynamically using the Neo4j Graph to only show highly relevant APIs and function signatures from the rest of the project).
+4. **Code Generation**: The `CoderAgent` uses the assembled context, deletes the `pass` statements from the scaffolding, and writes the actual raw code logic enclosed in strict XML tags (e.g., `<write_file path="...">`).
+5. **Integration**: The `IntegrationAgent` automatically wires the files together and securely imports the new modules.
 
 ### Phase 3: Verification, Deep Semantic Analysis, and Self-Healing
 1. **Sandbox Execution**: The `Runner` securely tests the generated code (e.g., `python -m py_compile`).

@@ -237,6 +237,59 @@ class SubsystemSpec:
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 
+class ProjectScale(str, Enum):
+    """Complexity classification for dynamic project sizing."""
+    SIMPLE = "simple"       # 1-5 files (calculator, single script)
+    MEDIUM = "medium"       # 5-30 files (web app, CLI tool)
+    LARGE = "large"         # 30-100 files (coding agent, full-stack app)
+    MASSIVE = "massive"     # 100+ files (OpenStack, OS, ERP system)
+
+
+@dataclass
+class EpicSpec:
+    """
+    V3 Epic — a Bounded Domain that is planned and built as a self-contained unit.
+    
+    Epics are the core unit of JIT (Just-In-Time) planning. The Master Planner
+    generates Epics first (high-level bounded domains with public API contracts),
+    then the Orchestrator plans and executes them one at a time.
+    """
+    id: str = field(default_factory=lambda: f"epic_{uuid.uuid4().hex[:8]}")
+    name: str = ""
+    description: str = ""
+    purpose: str = ""
+    status: NodeStatus = NodeStatus.PENDING
+    scale_estimate: ProjectScale = ProjectScale.MEDIUM
+    public_api_contract: List[str] = field(default_factory=list)
+    depends_on_epics: List[str] = field(default_factory=list)
+    subsystem: Optional[SubsystemSpec] = None
+    completed_files: List[str] = field(default_factory=list)
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "name": self.name, "description": self.description,
+            "purpose": self.purpose, "status": self.status.value,
+            "scale_estimate": self.scale_estimate.value,
+            "public_api_contract": self.public_api_contract,
+            "depends_on_epics": self.depends_on_epics,
+            "subsystem": self.subsystem.to_dict() if self.subsystem else None,
+            "completed_files": self.completed_files,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "EpicSpec":
+        d = dict(data)
+        if "status" in d:
+            d["status"] = NodeStatus(d["status"])
+        if "scale_estimate" in d:
+            d["scale_estimate"] = ProjectScale(d["scale_estimate"])
+        if "subsystem" in d and d["subsystem"] is not None:
+            d["subsystem"] = SubsystemSpec.from_dict(d["subsystem"])
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
+
 @dataclass
 class ArchitectureSpec:
     """

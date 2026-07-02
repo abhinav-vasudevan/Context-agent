@@ -11,6 +11,7 @@ export default function Workspace({ projectData, onBack }) {
   const [prompt, setPrompt] = useState(projectData?.original_prompt || '');
   const [status, setStatus] = useState(projectData?.status || 'idle');
   const [statusDetail, setStatusDetail] = useState('');
+  const [progress, setProgress] = useState(null);
   
   // Tabs
   const [activeTab, setActiveTab] = useState('code'); // code or knowledge
@@ -103,6 +104,12 @@ export default function Workspace({ projectData, onBack }) {
     status: (data) => {
       setStatus(data.status);
       setStatusDetail(data.detail || '');
+      if (data.status === 'idle' || data.status === 'completed' || data.status === 'error') {
+        setProgress(null);
+      }
+    },
+    progress: (data) => {
+      setProgress(data);
     },
     file_update: (data) => {
       loadFiles();
@@ -191,8 +198,12 @@ export default function Workspace({ projectData, onBack }) {
       api.projectFollowup(prompt.trim()).catch(console.error);
     } else {
       api.generatePlan(prompt.trim()).then((res) => {
-        if (res.success && res.plan_steps) {
-          setProject(prev => ({ ...prev, plan_steps: res.plan_steps }));
+        if (res.success) {
+          if (res.project) {
+            setProject(res.project);
+          } else if (res.plan_steps) {
+            setProject(prev => ({ ...prev, plan_steps: res.plan_steps }));
+          }
         }
       }).catch(console.error);
     }
@@ -291,6 +302,30 @@ export default function Workspace({ projectData, onBack }) {
 
         {/* Center Canvas */}
         <main className="flex-1 flex flex-col min-w-0 bg-nude-900 relative">
+          
+          {progress && (
+            <div className="bg-nude-850 border-b border-nude-700 p-4 shrink-0 shadow-sm relative overflow-hidden">
+              <div className="absolute inset-0 bg-accent/5"></div>
+              <div className="relative z-10 flex flex-col gap-2">
+                <div className="flex justify-between items-center text-xs font-mono">
+                  <span className="text-accent uppercase tracking-widest flex items-center gap-2">
+                    <Activity size={14} className="animate-pulse" /> Working...
+                  </span>
+                  <span className="text-nude-200">{Math.round(progress.percent || 0)}%</span>
+                </div>
+                <div className="w-full bg-nude-800 rounded-full h-2 overflow-hidden shadow-inner-soft">
+                  <div 
+                    className="bg-accent h-2 rounded-full transition-all duration-300 ease-out shadow-[0_0_10px_rgba(16,185,129,0.5)]" 
+                    style={{ width: `${Math.max(0, Math.min(100, progress.percent || 0))}%` }}
+                  ></div>
+                </div>
+                <div className="text-[10px] text-nude-500 font-mono text-center truncate px-2">
+                  {progress.label || 'Processing...'}
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="flex h-10 border-b border-nude-700 bg-nude-850 shrink-0">
             <button 
               className={`px-4 flex items-center gap-2 border-r border-nude-700 text-xs font-mono uppercase tracking-widest transition-all ${activeTab === 'plan' ? 'bg-nude-900 text-nude-200 border-t-2 border-t-accent' : 'text-nude-500 hover:bg-nude-800 hover:text-nude-300 border-t-2 border-t-transparent'}`} 
@@ -321,6 +356,26 @@ export default function Workspace({ projectData, onBack }) {
                     <ListTodo className="text-accent" /> Implementation Plan
                   </h2>
                   <div className="flex items-center gap-3">
+                    {status === 'paused' && (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={async () => {
+                            await api.retryExecution();
+                          }}
+                          className="px-5 py-2.5 bg-accent hover:bg-accent/80 text-nude-900 font-semibold text-sm rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all flex items-center gap-2"
+                        >
+                          Retry Execution
+                        </button>
+                        <button
+                          onClick={async () => {
+                            await api.skipExecution();
+                          }}
+                          className="px-5 py-2.5 bg-nude-700 hover:bg-nude-600 text-nude-200 font-semibold text-sm rounded-lg border border-nude-600 transition-all flex items-center gap-2"
+                        >
+                          Skip & Continue
+                        </button>
+                      </div>
+                    )}
                     {status === 'plan_review' && (
                       <button
                         onClick={async () => {
@@ -364,11 +419,40 @@ export default function Workspace({ projectData, onBack }) {
                       </p>
                     </div>
                   ))}
-                  {(!project?.plan_steps || project.plan_steps.length === 0) && (
+                  {(!project?.plan_steps || project.plan_steps.length === 0) && project?.epic_queue && project.epic_queue.length > 0 ? (
+                    project.epic_queue.map((epic, idx) => (
+                      <div key={idx} className="p-5 rounded-xl border border-nude-800 bg-nude-900 transition-all">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-3">
+                            <span className="flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold bg-nude-800 text-nude-500">
+                              {idx + 1}
+                            </span>
+                            <h3 className="font-mono text-base text-nude-200">{epic.name}</h3>
+                          </div>
+                          <span className="text-xs uppercase tracking-widest font-mono text-accent">
+                            Epic
+                          </span>
+                        </div>
+                        <p className="text-sm text-nude-400 font-sans ml-10 mb-2">
+                          {epic.purpose}
+                        </p>
+                        {epic.public_api_contract && epic.public_api_contract.length > 0 && (
+                          <div className="ml-10 text-xs text-nude-500 font-mono">
+                            <span className="text-nude-600">Contracts:</span> {epic.public_api_contract.join(', ')}
+                          </div>
+                        )}
+                        {epic.depends_on_epics && epic.depends_on_epics.length > 0 && (
+                          <div className="ml-10 text-xs text-nude-500 font-mono mt-1">
+                            <span className="text-nude-600">Depends On:</span> {epic.depends_on_epics.join(', ')}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  ) : (!project?.plan_steps || project.plan_steps.length === 0) ? (
                     <div className="text-center p-12 text-nude-500 font-mono text-sm border border-dashed border-nude-800 rounded-xl">
                       No plan generated yet.
                     </div>
-                  )}
+                  ) : null}
                 </div>
               </div>
             </div>

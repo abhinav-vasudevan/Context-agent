@@ -5,9 +5,10 @@ import { Cpu, FolderOpen, Plus, Clock, CheckCircle2, AlertCircle, Zap, Box } fro
 export default function Dashboard({ onProjectOpen }) {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
+  const [mode, setMode] = useState('none'); // 'none', 'create', 'ingest'
   const [projectName, setProjectName] = useState('');
   const [projectPrompt, setProjectPrompt] = useState('');
+  const [codebasePath, setCodebasePath] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const [backendOnline, setBackendOnline] = useState(null);
@@ -63,6 +64,22 @@ export default function Dashboard({ onProjectOpen }) {
     setError('');
     try {
       const data = await api.createProject(projectName.trim(), projectPrompt.trim());
+      onProjectOpen(data.project);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleIngest(e) {
+    e.preventDefault();
+    if (!projectName.trim() || !codebasePath.trim()) return;
+
+    setCreating(true);
+    setError('');
+    try {
+      const data = await api.ingestCodebase(projectName.trim(), codebasePath.trim());
       onProjectOpen(data.project);
     } catch (err) {
       setError(err.message);
@@ -138,20 +155,32 @@ export default function Dashboard({ onProjectOpen }) {
           </div>
         )}
 
-        {/* Create Project Section */}
+        {/* Create / Ingest Project Section */}
         <section className="flex flex-col gap-4">
-          {!showCreate ? (
-            <button 
-              className="group flex flex-col items-center justify-center p-12 bg-nude-850/50 hover:bg-nude-800 border border-nude-700 border-dashed rounded-2xl transition-all hover:border-nude-500"
-              onClick={() => setShowCreate(true)}
-            >
-              <div className="bg-nude-800 group-hover:bg-nude-700 p-4 rounded-full mb-4 transition-colors">
-                <Plus size={32} className="text-nude-400 group-hover:text-nude-200" />
-              </div>
-              <span className="text-lg font-medium text-nude-200 mb-1">New Workspace</span>
-              <span className="text-sm text-nude-500">Initialize a clean environment for your next project</span>
-            </button>
-          ) : (
+          {mode === 'none' ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <button 
+                className="group flex flex-col items-center justify-center p-12 bg-nude-850/50 hover:bg-nude-800 border border-nude-700 border-dashed rounded-2xl transition-all hover:border-nude-500"
+                onClick={() => setMode('create')}
+              >
+                <div className="bg-nude-800 group-hover:bg-nude-700 p-4 rounded-full mb-4 transition-colors">
+                  <Plus size={32} className="text-nude-400 group-hover:text-nude-200" />
+                </div>
+                <span className="text-lg font-medium text-nude-200 mb-1">New Workspace</span>
+                <span className="text-sm text-nude-500">Initialize a clean environment for your next project</span>
+              </button>
+              <button 
+                className="group flex flex-col items-center justify-center p-12 bg-nude-850/50 hover:bg-nude-800 border border-nude-700 border-dashed rounded-2xl transition-all hover:border-nude-500"
+                onClick={() => setMode('ingest')}
+              >
+                <div className="bg-nude-800 group-hover:bg-nude-700 p-4 rounded-full mb-4 transition-colors">
+                  <FolderOpen size={32} className="text-nude-400 group-hover:text-nude-200" />
+                </div>
+                <span className="text-lg font-medium text-nude-200 mb-1">Ingest Codebase</span>
+                <span className="text-sm text-nude-500">Import an existing local codebase into the AI Brain</span>
+              </button>
+            </div>
+          ) : mode === 'create' ? (
             <form className="bg-nude-850 border border-nude-700 rounded-2xl p-6 md:p-8 shadow-soft" onSubmit={handleCreate}>
               <h2 className="text-xl font-medium text-nude-100 mb-6 flex items-center gap-2">
                 <Box size={20} className="text-nude-500" /> Initialize Workspace
@@ -186,7 +215,7 @@ export default function Dashboard({ onProjectOpen }) {
                 </div>
 
                 <div className="flex items-center justify-end gap-3 pt-4 border-t border-nude-700/50">
-                  <button type="button" className="px-6 py-2.5 rounded-xl text-nude-400 hover:text-nude-200 hover:bg-nude-800 transition-colors font-medium text-sm" onClick={() => setShowCreate(false)}>
+                  <button type="button" className="px-6 py-2.5 rounded-xl text-nude-400 hover:text-nude-200 hover:bg-nude-800 transition-colors font-medium text-sm" onClick={() => setMode('none')}>
                     Cancel
                   </button>
                   <button 
@@ -195,6 +224,56 @@ export default function Dashboard({ onProjectOpen }) {
                     disabled={creating || !projectName.trim()}
                   >
                     {creating ? 'Initializing...' : 'Create Workspace'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          ) : (
+            <form className="bg-nude-850 border border-nude-700 rounded-2xl p-6 md:p-8 shadow-soft" onSubmit={handleIngest}>
+              <h2 className="text-xl font-medium text-nude-100 mb-6 flex items-center gap-2">
+                <FolderOpen size={20} className="text-nude-500" /> Ingest Codebase
+              </h2>
+              
+              <div className="space-y-6">
+                <div>
+                  <label htmlFor="project-name" className="block text-sm font-medium text-nude-400 mb-2">Workspace Name</label>
+                  <input
+                    id="project-name"
+                    type="text"
+                    className="w-full bg-nude-900 border border-nude-700 rounded-xl px-4 py-3 text-nude-200 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-all placeholder:text-nude-600"
+                    placeholder="e.g., legacy-ecommerce-platform"
+                    value={projectName}
+                    onChange={(e) => setProjectName(e.target.value)}
+                    autoFocus
+                    required
+                  />
+                </div>
+                
+                <div>
+                  <label htmlFor="codebase-path" className="block text-sm font-medium text-nude-400 mb-2">
+                    Absolute Directory Path
+                  </label>
+                  <input
+                    id="codebase-path"
+                    type="text"
+                    className="w-full bg-nude-900 border border-nude-700 rounded-xl px-4 py-3 text-nude-200 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-all placeholder:text-nude-600"
+                    placeholder="/absolute/path/to/existing/codebase"
+                    value={codebasePath}
+                    onChange={(e) => setCodebasePath(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-nude-700/50">
+                  <button type="button" className="px-6 py-2.5 rounded-xl text-nude-400 hover:text-nude-200 hover:bg-nude-800 transition-colors font-medium text-sm" onClick={() => setMode('none')}>
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit" 
+                    className="px-6 py-2.5 rounded-xl bg-nude-200 text-nude-900 hover:bg-white disabled:opacity-50 disabled:hover:bg-nude-200 transition-colors font-medium text-sm shadow-sm"
+                    disabled={creating || !projectName.trim() || !codebasePath.trim()}
+                  >
+                    {creating ? 'Ingesting...' : 'Start Ingestion'}
                   </button>
                 </div>
               </div>

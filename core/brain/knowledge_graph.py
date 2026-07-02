@@ -342,8 +342,8 @@ class KnowledgeGraph:
             result = session.run(query)
             return [dict(record) for record in result]
 
-    def get_graph_data(self) -> Dict[str, Any]:
-        """Get raw nodes and links for visualization."""
+    def get_graph_data(self, project_name: str = None) -> Dict[str, Any]:
+        """Get raw nodes and links for visualization. If project_name is provided, filters to that project."""
         if not self._driver:
             return {"nodes": [], "links": []}
             
@@ -351,7 +351,12 @@ class KnowledgeGraph:
         links = []
         with self._driver.session(database=self.database) as session:
             # Get nodes
-            n_result = session.run("MATCH (n) RETURN id(n) as node_id, labels(n) as labels, properties(n) as props")
+            if project_name:
+                n_query = "MATCH (p:Project {name: $name})-[*0..]-(n) RETURN DISTINCT id(n) as node_id, labels(n) as labels, properties(n) as props"
+                n_result = session.run(n_query, name=project_name)
+            else:
+                n_result = session.run("MATCH (n) RETURN id(n) as node_id, labels(n) as labels, properties(n) as props")
+                
             for record in n_result:
                 props = record["props"]
                 node_name = props.get("name", props.get("path", str(record["node_id"])))
@@ -362,7 +367,12 @@ class KnowledgeGraph:
                 })
                 
             # Get edges
-            e_result = session.run("MATCH (a)-[r]->(b) RETURN properties(a) as a_props, type(r) as type, properties(b) as b_props, id(a) as aid, id(b) as bid")
+            if project_name:
+                e_query = "MATCH (p:Project {name: $name})-[*0..]-(a)-[r]->(b) RETURN properties(a) as a_props, type(r) as type, properties(b) as b_props, id(a) as aid, id(b) as bid"
+                e_result = session.run(e_query, name=project_name)
+            else:
+                e_result = session.run("MATCH (a)-[r]->(b) RETURN properties(a) as a_props, type(r) as type, properties(b) as b_props, id(a) as aid, id(b) as bid")
+                
             for record in e_result:
                 a_props = record["a_props"]
                 b_props = record["b_props"]
