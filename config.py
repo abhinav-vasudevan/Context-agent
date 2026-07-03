@@ -35,8 +35,8 @@ OLLAMA_BASE_URL = "http://127.0.0.1:11435"
 OLLAMA_MODEL = "qwen3.6:27b"
 OLLAMA_NUM_CTX = 16384          # Context window (lowered to 16k for faster inference)
 OLLAMA_TEMPERATURE = 0.3        # Lower = more deterministic, less hallucination
-OLLAMA_REQUEST_TIMEOUT = 600    # seconds — some calls are slow on smaller models
-OLLAMA_MAX_RETRIES = 3          # Retry attempts on transient failures
+OLLAMA_REQUEST_TIMEOUT = 1000    # seconds — some calls are slow on smaller models
+OLLAMA_MAX_RETRIES = 10          # Retry attempts on transient failures
 OLLAMA_RETRY_BACKOFF = 2.0      # Exponential backoff base (seconds)
 
 # ── Token Budget ───────────────────────────────────────────────────────
@@ -49,16 +49,16 @@ TOKEN_BUDGET_SUMMARIES = 10000
 MIN_GENERATION_BUDGET = 10000     # Ensures the LLM always has space to write its response
 
 # ── Agent Settings ────────────────────────────────────────────────────
-MAX_FIX_ATTEMPTS = 15            # Max retries when fixing errors (increased for deep semantic analysis convergence)
-MAX_SEMANTIC_FIX_ATTEMPTS = 10   # Max retries for the post-build semantic analysis loop (Ruff/Pyright/Semgrep)
-MAX_PLAN_RETRIES = 2             # Max retries for plan generation
-SYNTAX_CHECK_TIMEOUT = 10       # Seconds for syntax check subprocess
-PROCESS_RUN_TIMEOUT = 300        # Seconds for running user projects (5 min)
+MAX_FIX_ATTEMPTS = 999999            # Max retries when fixing errors (effectively infinite)
+MAX_SEMANTIC_FIX_ATTEMPTS = 30   # Max retries for the post-build semantic analysis loop (Ruff/Pyright/Semgrep)
+MAX_PLAN_RETRIES = 5             # Max retries for plan generation
+SYNTAX_CHECK_TIMEOUT = 600       # Seconds for syntax check subprocess
+PROCESS_RUN_TIMEOUT = 1000       # Seconds for running user projects (5 min)
 
 # ── QA Agent Settings ─────────────────────────────────────────────────
-MAX_QA_ATTEMPTS = 3              # Max autonomous test-fix cycles
-MAX_QA_INTERACTIONS = 10         # Max input prompts the QA Agent will answer per run
-QA_PROCESS_TIMEOUT = 60          # Seconds before killing a QA test run
+MAX_QA_ATTEMPTS = 10             # Max autonomous test-fix cycles
+MAX_QA_INTERACTIONS = 20         # Max input prompts the QA Agent will answer per run
+QA_PROCESS_TIMEOUT = 1000        # Seconds before killing a QA test run
 
 # ── Backend Server Settings ───────────────────────────────────────────
 BACKEND_HOST = "127.0.0.1"

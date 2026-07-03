@@ -36,7 +36,7 @@
 .project-title {
   font-size: 1.05rem;
   font-weight: 600;
-  color: #ffffff;
+  color: #fafaf9;
 }
 
 .project-status {
@@ -96,7 +96,7 @@
   font-size: 1.3rem;
   font-weight: 700;
   margin-bottom: var(--space-sm);
-  color: #ffffff;
+  color: #fafaf9;
 }
 .prompt-hint {
   color: var(--text-muted);
@@ -171,15 +171,15 @@
   color: var(--text-primary);
 }
 .tab.active {
-  color: #ffffff;
-  border-bottom-color: #ffffff;
+  color: #fafaf9;
+  border-bottom-color: #fafaf9;
 }
 
 .tab-pulse {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #ffffff;
+  background: #fafaf9;
   animation: pulse-glow 1.5s infinite;
 }
 .tab-pulse.green {

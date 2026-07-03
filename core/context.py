@@ -253,7 +253,7 @@ Use this ONLY when you have fully implemented the requested code AND verified it
 
 ABSOLUTE RULES — violating ANY means failure:
 1. You MUST use `<write_file>` to output code. NEVER use markdown code blocks like ```python.
-2. The ENTIRE content inside `<write_file>` must be valid Python.
+2. The ENTIRE content inside `<write_file>` must be valid, runnable code for the given file extension (Python, JavaScript, JSX, TypeScript, CSS, HTML, etc.).
 3. Use the FILE REGISTRY to import from existing project files. Pay close attention to function signatures!
 4. Every function and class must have a REAL implementation — NO empty pass stubs, NO "# TODO" placeholders.
 5. NEVER use placeholders like `# ... existing code ...`. You MUST write out every single line of code so the file can be saved directly.
@@ -298,8 +298,8 @@ DO NOT write actual code files. Just write the highly detailed design document.
 Your job is to take a detailed Architectural Blueprint and translate it into a strict, step-by-step implementation plan.
 
 MANDATORY RULES:
-1. Step 1 MUST ALWAYS be creating `main.py` at the root. It MUST be a completely empty skeleton with NO imports. Just `if __name__ == "__main__":` and `pass`.
-2. All other source files MUST be placed in feature-based subdirectories (e.g., `core/`, `backend/`, `frontend/`, `models/`). Do NOT put everything in a flat directory. Use a deep, modular structure.
+1. Step 1 MUST ALWAYS be creating `main.py` (for Python projects) or `index.js`/`App.jsx` (for frontend projects) at the root. It MUST be a completely empty skeleton.
+2. All other source files MUST be placed in feature-based subdirectories (e.g., `core/`, `backend/`, `frontend/`, `src/`, `components/`, `models/`). Do NOT put everything in a flat directory. Use a deep, modular structure.
 3. There MUST be only ONE step for `main.py`. The system will automatically update it later, so do NOT create an 'update main.py' step.
 4. The LAST step MUST be creating `README.md`.
 5. Each step produces EXACTLY ONE file.
@@ -397,7 +397,7 @@ FORMATTING RULES (violating any means failure):
 - Do NOT wrap the plan in a markdown code block.
 - Do NOT number the steps with `1.`, `2.` format — use `STEP 1:`, `STEP 2:` format only."""
 
-    FIXER_SYSTEM_PROMPT = """You are an autonomous Python debugging agent. You are given:
+    FIXER_SYSTEM_PROMPT = """You are an autonomous debugging agent for Python and JavaScript/TypeScript projects. You are given:
 1. The error traceback
 2. The project's File Registry (showing all existing files and their APIs)
 3. A History of previously attempted fixes (to prevent you from repeating mistakes)

@@ -2,7 +2,7 @@
 Summarization Agent.
 
 Runs after a file is generated or modified.
-Reads the raw Python code and uses the LLM to extract a SemanticSummary
+Reads the raw source code and uses the LLM to extract a SemanticSummary
 which is then stored in the Project Brain (ChromaDB + Neo4j).
 """
 
@@ -65,7 +65,15 @@ Output ONLY the JSON object. No markdown. No explanation."""
         # We only need the essence of the file to summarize it
         truncated_code = self.llm.truncate_to_tokens(code_content, 4000)
 
-        prompt = f"FILE PATH: {file_path}\n\nSOURCE CODE:\n```python\n{truncated_code}\n```"
+        # Detect language for proper code fence
+        lang = 'python'
+        ext_map = {'.js': 'javascript', '.jsx': 'jsx', '.ts': 'typescript', '.tsx': 'tsx', '.css': 'css', '.html': 'html', '.md': 'markdown'}
+        for ext, l in ext_map.items():
+            if file_path.endswith(ext):
+                lang = l
+                break
+
+        prompt = f"FILE PATH: {file_path}\n\nSOURCE CODE:\n```{lang}\n{truncated_code}\n```"
 
         raw_output = await self.llm.generate(prompt=prompt, system=self.SYSTEM_PROMPT)
 

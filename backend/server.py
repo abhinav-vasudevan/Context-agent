@@ -242,10 +242,14 @@ async def send_process_input(req: InputRequest):
     return result
 
 
+class RetryRequest(BaseModel):
+    step_number: Optional[int] = None
+
 @app.post("/api/execute/retry")
-async def retry_execution():
+async def retry_execution(req: Optional[RetryRequest] = None):
     """Retry execution after a paused state (e.g. max fix attempts reached)."""
-    result = await orchestrator.retry_execution()
+    step_num = req.step_number if req else None
+    result = await orchestrator.retry_execution(step_num)
     return result
 
 
@@ -260,6 +264,20 @@ async def skip_execution():
 async def kill_process():
     """Kill the running process."""
     result = await orchestrator.cancel_execution()
+    return result
+
+
+@app.post("/api/pause")
+async def pause_execution():
+    """Pause the orchestrator execution."""
+    result = await orchestrator.pause_execution()
+    return result
+
+
+@app.post("/api/resume")
+async def resume_execution():
+    """Resume the orchestrator execution."""
+    result = await orchestrator.resume_execution()
     return result
 
 

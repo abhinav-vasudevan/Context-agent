@@ -754,6 +754,89 @@ class Runner:
         except Exception as e:
             return RunResult(success=False, error=str(e))
 
+    async def install_npm_requirements(
+        self,
+        on_stdout: Optional[Callable[[str], None]] = None,
+        on_stderr: Optional[Callable[[str], None]] = None,
+    ) -> RunResult:
+        """Install dependencies from package.json using npm."""
+        # Find package.json either in root or frontend/ folder
+        pkg_dir = None
+        if (self.workspace / "package.json").exists():
+            pkg_dir = self.workspace
+        elif (self.workspace / "frontend" / "package.json").exists():
+            pkg_dir = self.workspace / "frontend"
+            
+        if not pkg_dir:
+            return RunResult(success=True, stdout="No package.json found.")
+
+        cmd = ["npm", "install"]
+        if config.IS_WINDOWS:
+            cmd = ["npm.cmd", "install"]
+
+        log.info("Runner: installing npm packages in %s", pkg_dir)
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(pkg_dir),
+            )
+
+            stdout_buf = bytearray()
+            stderr_buf = bytearray()
+
+            async def stream_stdout():
+                while True:
+                    try:
+                        chunk = await process.stdout.read(256)
+                    except (asyncio.CancelledError, ValueError):
+                        break
+                    if not chunk:
+                        break
+                    text = chunk.decode("utf-8", errors="replace")
+                    stdout_buf.extend(chunk)
+                    if on_stdout:
+                        on_stdout(text)
+
+            async def stream_stderr():
+                while True:
+                    try:
+                        chunk = await process.stderr.read(256)
+                    except (asyncio.CancelledError, ValueError):
+                        break
+                    if not chunk:
+                        break
+                    text = chunk.decode("utf-8", errors="replace")
+                    stderr_buf.extend(chunk)
+                    if on_stderr:
+                        on_stderr(text)
+
+            await asyncio.wait_for(
+                asyncio.gather(
+                    stream_stdout(),
+                    stream_stderr(),
+                    process.wait(),
+                ),
+                timeout=300
+            )
+
+            return RunResult(
+                success=process.returncode == 0,
+                exit_code=process.returncode,
+                stdout=stdout_buf.decode('utf-8', errors='replace'),
+                stderr=stderr_buf.decode('utf-8', errors='replace'),
+            )
+        except asyncio.TimeoutError:
+            if process:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+            return RunResult(success=False, error="npm install timed out")
+        except Exception as e:
+            return RunResult(success=False, error=str(e))
+
     async def create_venv(self) -> RunResult:
         """Create a virtual environment for the project."""
         if self.venv_path and self.venv_path.exists():

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 import CodeViewer from '../components/CodeViewer';
-import { Terminal, FolderTree, Cpu, ArrowLeft, Send, Sparkles, BookOpen, Code2, User, ListTodo, CheckCircle2, Activity } from 'lucide-react';
+import { Terminal, FolderTree, Cpu, ArrowLeft, Send, Sparkles, BookOpen, Code2, User, ListTodo, CheckCircle2, Activity, Square, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
 import ArchitectureGraph from '../components/ArchitectureGraph';
 
 export default function Workspace({ projectData, onBack }) {
@@ -10,12 +10,16 @@ export default function Workspace({ projectData, onBack }) {
   const [project, setProject] = useState(projectData);
   const [prompt, setPrompt] = useState(projectData?.original_prompt || '');
   const [status, setStatus] = useState(projectData?.status || 'idle');
-  const [statusDetail, setStatusDetail] = useState('');
   const [progress, setProgress] = useState(null);
   
   // Tabs
   const [activeTab, setActiveTab] = useState('code'); // code or knowledge
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
+  const [expandedEpics, setExpandedEpics] = useState({});
+
+  const toggleEpic = (epicId) => {
+    setExpandedEpics(prev => ({ ...prev, [epicId]: !prev[epicId] }));
+  };
 
   // Chat History
   const [messages, setMessages] = useState([]);
@@ -42,7 +46,7 @@ export default function Workspace({ projectData, onBack }) {
   const currentThinkingRef = useRef(null);
 
   // ── WebSocket ──────────────────────────────────────────────────────
-  const ws = useWebSocket({
+  useWebSocket({
     llm_token: (data) => {
       setLlmStreaming(true);
       setIsThinking(false);
@@ -103,7 +107,6 @@ export default function Workspace({ projectData, onBack }) {
     },
     status: (data) => {
       setStatus(data.status);
-      setStatusDetail(data.detail || '');
       if (data.status === 'idle' || data.status === 'completed' || data.status === 'error') {
         setProgress(null);
       }
@@ -128,8 +131,14 @@ export default function Workspace({ projectData, onBack }) {
         return { ...prev, plan_steps: newSteps };
       });
     },
+    plan_update: (data) => {
+      setProject(prev => {
+        if (!prev) return prev;
+        return { ...prev, plan_steps: data.steps || data };
+      });
+    },
     error: (data) => {
-      setStatusDetail(data.error);
+      console.error(data.error);
     },
     pong: () => {},
   });
@@ -152,7 +161,9 @@ export default function Workspace({ projectData, onBack }) {
     try {
       const data = await api.listFiles();
       setWorkspaceFiles(data.files || []);
-    } catch {}
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   async function loadFileContent(filePath) {
@@ -160,23 +171,28 @@ export default function Workspace({ projectData, onBack }) {
       const data = await api.getFile(filePath);
       setSelectedFile(filePath);
       setFileContent(data.content || '');
-    } catch {}
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   useEffect(() => {
     if (project) {
       loadFiles();
-      if (projectData && projectData.chat_history && projectData.chat_history.length > 0) {
-        setMessages(projectData.chat_history);
-      } else if (project.original_prompt && messages.length === 0) {
-        setMessages([{ role: 'user', content: project.original_prompt }]);
-      }
+      setTimeout(() => {
+        if (projectData && projectData.chat_history && projectData.chat_history.length > 0) {
+          setMessages(projectData.chat_history);
+        } else if (project.original_prompt && messages.length === 0) {
+          setMessages([{ role: 'user', content: project.original_prompt }]);
+        }
+      }, 0);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, projectData]);
 
   useEffect(() => {
     if (status === 'plan_review') {
-      setActiveTab('plan');
+      setTimeout(() => setActiveTab('plan'), 0);
     }
   }, [status]);
 
@@ -212,6 +228,14 @@ export default function Workspace({ projectData, onBack }) {
     setTimeout(() => scrollToBottom(chatRef, true), 100);
   };
 
+  const formatAgentMessage = (text) => {
+    if (!text) return null;
+    let formatted = text.replace(/<view_file>(.*?)<\/view_file>/g, '\n👁️ Viewing: $1\n');
+    formatted = formatted.replace(/<edit_file path="([^"]+)">[\s\S]*?(?:<\/edit_file>|$)/g, '\n📝 Editing: $1\n');
+    formatted = formatted.replace(/<run_command>([\s\S]*?)<\/run_command>/g, '\n💻 Running Command: $1\n');
+    return formatted;
+  };
+
   const renderMessage = (msg, index) => {
     if (msg.role === 'user') {
       return (
@@ -245,7 +269,7 @@ export default function Workspace({ projectData, onBack }) {
               <Sparkles size={12} />
             </div>
             <div className="flex-1 text-xs text-nude-300 font-mono pt-1 whitespace-pre-wrap max-h-[350px] overflow-y-auto custom-scrollbar bg-nude-900/50 p-3 rounded-lg border border-nude-800/80 shadow-inner-soft">
-              {msg.content}
+              {formatAgentMessage(msg.content)}
             </div>
           </div>
         )}
@@ -303,6 +327,41 @@ export default function Workspace({ projectData, onBack }) {
         {/* Center Canvas */}
         <main className="flex-1 flex flex-col min-w-0 bg-nude-900 relative">
           
+          {/* Global Project Progress Bar */}
+          {(() => {
+            let globalProgressPercent = 0;
+            if (project?.epic_queue && project.epic_queue.length > 0) {
+              let completedEpicsCount = 0;
+              project.epic_queue.forEach(epic => {
+                const epicSteps = (project?.plan_steps || []).filter(s => s.epic_id === epic.id);
+                if (epicSteps.length > 0 && epicSteps.every(s => s.status === 'completed')) {
+                  completedEpicsCount++;
+                }
+              });
+              globalProgressPercent = Math.round((completedEpicsCount / project.epic_queue.length) * 100);
+            } else if (project?.plan_steps && project.plan_steps.length > 0) {
+              globalProgressPercent = Math.round((project.plan_steps.filter(s => s.status === 'completed').length / project.plan_steps.length) * 100);
+            }
+            
+            if (project?.epic_queue?.length > 0 || project?.plan_steps?.length > 0) {
+              return (
+                <div className="bg-nude-850 border-b border-nude-700 px-4 py-2 shrink-0">
+                  <div className="flex justify-between items-center text-xs font-mono mb-1 text-nude-400">
+                    <span>Project Progress</span>
+                    <span>{globalProgressPercent}%</span>
+                  </div>
+                  <div className="w-full bg-nude-800 rounded-full h-1.5 overflow-hidden shadow-inner-soft">
+                    <div 
+                      className="bg-accent h-1.5 rounded-full transition-all duration-300 ease-out shadow-[0_0_10px_rgba(16,185,129,0.5)]" 
+                      style={{ width: `${globalProgressPercent}%` }}
+                    ></div>
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })()}
+
           {progress && (
             <div className="bg-nude-850 border-b border-nude-700 p-4 shrink-0 shadow-sm relative overflow-hidden">
               <div className="absolute inset-0 bg-accent/5"></div>
@@ -360,9 +419,17 @@ export default function Workspace({ projectData, onBack }) {
                       <div className="flex gap-2">
                         <button
                           onClick={async () => {
-                            await api.retryExecution();
+                            await api.resumeExecution();
                           }}
                           className="px-5 py-2.5 bg-accent hover:bg-accent/80 text-nude-900 font-semibold text-sm rounded-lg shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all flex items-center gap-2"
+                        >
+                          <Activity size={18} /> Resume Execution
+                        </button>
+                        <button
+                          onClick={async () => {
+                            await api.retryExecution();
+                          }}
+                          className="px-5 py-2.5 bg-nude-700 hover:bg-nude-600 text-nude-200 font-semibold text-sm rounded-lg border border-nude-600 transition-all flex items-center gap-2"
                         >
                           Retry Execution
                         </button>
@@ -375,6 +442,16 @@ export default function Workspace({ projectData, onBack }) {
                           Skip & Continue
                         </button>
                       </div>
+                    )}
+                    {(status === 'executing' || status === 'fixing') && (
+                      <button
+                        onClick={async () => {
+                          await api.pauseExecution();
+                        }}
+                        className="px-5 py-2.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 font-semibold text-sm rounded-lg border border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.2)] transition-all flex items-center gap-2"
+                      >
+                        <Square size={18} /> Pause Execution
+                      </button>
                     )}
                     {status === 'plan_review' && (
                       <button
@@ -401,58 +478,166 @@ export default function Workspace({ projectData, onBack }) {
                 </div>
 
                 <div className="flex flex-col gap-4">
-                  {(project?.plan_steps || []).map((step, idx) => (
-                    <div key={idx} className={`p-5 rounded-xl border ${step.status === 'in_progress' ? 'border-accent/50 bg-accent/5 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : step.status === 'completed' ? 'border-nude-700/50 bg-nude-850/50' : 'border-nude-800 bg-nude-900'} transition-all`}>
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-3">
-                          <span className={`flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${step.status === 'completed' ? 'bg-emerald-500/20 text-emerald-400' : step.status === 'in_progress' ? 'bg-accent text-nude-900 animate-pulse' : 'bg-nude-800 text-nude-500'}`}>
-                            {idx + 1}
-                          </span>
-                          <h3 className={`font-mono text-base ${step.status === 'in_progress' ? 'text-accent' : 'text-nude-200'}`}>{step.title || step.file_path}</h3>
+                  {project?.epic_queue && project.epic_queue.length > 0 ? (
+                    project.epic_queue.map((epic, epicIdx) => {
+                      const epicSteps = (project?.plan_steps || []).filter(s => s.epic_id === epic.id);
+                      const isExpanded = expandedEpics[epic.id] !== false; // Default to true if undefined
+                      
+                      let epicStatus = epic.status || 'pending';
+                      if (epicSteps.length > 0) {
+                        if (epicSteps.some(s => s.status === 'failed')) epicStatus = 'failed';
+                        else if (epicSteps.every(s => s.status === 'completed')) epicStatus = 'completed';
+                        else if (epicSteps.some(s => s.status === 'in_progress')) epicStatus = 'in_progress';
+                        else if (epicSteps.some(s => s.status === 'completed')) epicStatus = 'in_progress';
+                        else epicStatus = 'pending';
+                      }
+
+                      return (
+                        <div key={epic.id} className={`rounded-xl border ${epicStatus === 'in_progress' ? 'border-accent/50 bg-accent/5' : epicStatus === 'completed' ? 'border-nude-700/50 bg-nude-850/50' : 'border-nude-800 bg-nude-900'} overflow-hidden transition-all shadow-lg`}>
+                          {/* Epic Header */}
+                          <div 
+                            className="p-4 flex items-center justify-between cursor-pointer hover:bg-nude-800/50 transition-colors select-none"
+                            onClick={() => toggleEpic(epic.id)}
+                          >
+                            <div className="flex items-center gap-3">
+                              <button className="text-nude-500 hover:text-nude-300 transition-colors">
+                                {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                              </button>
+                              <span className={`flex items-center justify-center w-8 h-8 rounded-lg text-xs font-bold ${epicStatus === 'completed' ? 'bg-emerald-500/20 text-emerald-400' : epicStatus === 'in_progress' ? 'bg-accent text-nude-900' : 'bg-nude-800 text-nude-500 border border-nude-700'}`}>
+                                E{epicIdx + 1}
+                              </span>
+                              <div>
+                                <h3 className={`font-mono text-base ${epicStatus === 'in_progress' ? 'text-accent' : 'text-nude-200'}`}>{epic.name}</h3>
+                                <div className="text-xs text-nude-500 font-sans mt-0.5">{epic.purpose}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-4">
+                              {epicSteps.length > 0 && (
+                                <div className="flex items-center gap-2">
+                                  {/* Completion Circle */}
+                                  <div className="relative flex items-center justify-center w-8 h-8" title={`${Math.round((epicSteps.filter(s => s.status === 'completed').length / epicSteps.length) * 100)}% completed`}>
+                                    <svg className="w-8 h-8 transform -rotate-90">
+                                      <circle
+                                        className="text-nude-800"
+                                        strokeWidth="2.5"
+                                        stroke="currentColor"
+                                        fill="transparent"
+                                        r="12"
+                                        cx="16"
+                                        cy="16"
+                                      />
+                                      <circle
+                                        className={`${epicStatus === 'completed' ? 'text-emerald-500' : 'text-accent'} transition-all duration-500 ease-in-out`}
+                                        strokeWidth="2.5"
+                                        strokeDasharray={2 * Math.PI * 12}
+                                        strokeDashoffset={(2 * Math.PI * 12) - ((Math.round((epicSteps.filter(s => s.status === 'completed').length / epicSteps.length) * 100) / 100) * (2 * Math.PI * 12))}
+                                        strokeLinecap="round"
+                                        stroke="currentColor"
+                                        fill="transparent"
+                                        r="12"
+                                        cx="16"
+                                        cy="16"
+                                      />
+                                    </svg>
+                                    <span className="absolute text-[8px] font-mono text-nude-400">
+                                      {Math.round((epicSteps.filter(s => s.status === 'completed').length / epicSteps.length) * 100)}%
+                                    </span>
+                                  </div>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      api.retryExecution(epicSteps[0].step_number);
+                                    }}
+                                    className="p-1.5 text-nude-500 hover:text-accent hover:bg-nude-800 rounded transition-colors"
+                                    title="Retry this entire Epic"
+                                  >
+                                    <RotateCcw size={16} />
+                                  </button>
+                                </div>
+                              )}
+                              <span className="text-xs uppercase tracking-widest font-mono text-nude-500 bg-nude-900 px-2 py-1 rounded border border-nude-800/50 shadow-inner-soft">
+                                {epicStatus.replace('_', ' ')}
+                              </span>
+                            </div>
+                          </div>
+                          
+                          {/* Epic Steps */}
+                          {isExpanded && (
+                            <div className="border-t border-nude-800/50 bg-nude-900/30 p-4 pl-12 flex flex-col gap-3">
+                              {epicSteps.length === 0 ? (
+                                <div className="text-xs text-nude-500 font-mono italic">Waiting for JIT Planning...</div>
+                              ) : (
+                                epicSteps.map((step) => (
+                                  <div key={step.step_number} className={`p-4 rounded-lg border ${step.status === 'in_progress' ? 'border-accent/40 bg-accent/5' : step.status === 'completed' ? 'border-nude-700/50 bg-nude-850/50' : 'border-nude-800/50 bg-nude-900/50'} transition-all flex flex-col gap-2`}>
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-3">
+                                        <span className={`text-xs font-mono w-6 text-center ${step.status === 'in_progress' ? 'text-accent animate-pulse' : 'text-nude-500'}`}>
+                                          {step.step_number}
+                                        </span>
+                                        <h4 className={`font-mono text-sm ${step.status === 'in_progress' ? 'text-accent' : 'text-nude-300'}`}>{step.title || step.file_path}</h4>
+                                      </div>
+                                      <div className="flex items-center gap-3">
+                                        {step.status === 'completed' && (
+                                          <button
+                                            onClick={() => api.retryExecution(step.step_number)}
+                                            className="p-1 text-nude-500 hover:text-accent hover:bg-nude-800 rounded transition-colors"
+                                            title="Retry this step and all steps after it"
+                                          >
+                                            <RotateCcw size={14} />
+                                          </button>
+                                        )}
+                                        <span className="text-[10px] uppercase tracking-widest font-mono text-nude-500">
+                                          {step.status}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <p className="text-xs text-nude-400 font-sans ml-9">
+                                      {step.description}
+                                    </p>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          )}
                         </div>
-                        <span className="text-xs uppercase tracking-widest font-mono text-nude-500">
-                          {step.status}
-                        </span>
-                      </div>
-                      <p className="text-sm text-nude-400 font-sans ml-10">
-                        {step.description}
-                      </p>
-                    </div>
-                  ))}
-                  {(!project?.plan_steps || project.plan_steps.length === 0) && project?.epic_queue && project.epic_queue.length > 0 ? (
-                    project.epic_queue.map((epic, idx) => (
-                      <div key={idx} className="p-5 rounded-xl border border-nude-800 bg-nude-900 transition-all">
+                      );
+                    })
+                  ) : (project?.plan_steps && project.plan_steps.length > 0) ? (
+                    // Fallback for simple projects without epics
+                    project.plan_steps.map((step, idx) => (
+                      <div key={idx} className={`p-5 rounded-xl border ${step.status === 'in_progress' ? 'border-accent/50 bg-accent/5 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : step.status === 'completed' ? 'border-nude-700/50 bg-nude-850/50' : 'border-nude-800 bg-nude-900'} transition-all`}>
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-3">
-                            <span className="flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold bg-nude-800 text-nude-500">
+                            <span className={`flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${step.status === 'completed' ? 'bg-emerald-500/20 text-emerald-400' : step.status === 'in_progress' ? 'bg-accent text-nude-900 animate-pulse' : 'bg-nude-800 text-nude-500'}`}>
                               {idx + 1}
                             </span>
-                            <h3 className="font-mono text-base text-nude-200">{epic.name}</h3>
+                            <h3 className={`font-mono text-base ${step.status === 'in_progress' ? 'text-accent' : 'text-nude-200'}`}>{step.title || step.file_path}</h3>
                           </div>
-                          <span className="text-xs uppercase tracking-widest font-mono text-accent">
-                            Epic
-                          </span>
+                          <div className="flex items-center gap-3">
+                            {step.status === 'completed' && (
+                              <button
+                                onClick={() => api.retryExecution(step.step_number)}
+                                className="p-1 text-nude-500 hover:text-accent hover:bg-nude-800 rounded transition-colors"
+                                title="Retry this step and all steps after it"
+                              >
+                                <RotateCcw size={14} />
+                              </button>
+                            )}
+                            <span className="text-xs uppercase tracking-widest font-mono text-nude-500">
+                              {step.status}
+                            </span>
+                          </div>
                         </div>
-                        <p className="text-sm text-nude-400 font-sans ml-10 mb-2">
-                          {epic.purpose}
+                        <p className="text-sm text-nude-400 font-sans ml-10">
+                          {step.description}
                         </p>
-                        {epic.public_api_contract && epic.public_api_contract.length > 0 && (
-                          <div className="ml-10 text-xs text-nude-500 font-mono">
-                            <span className="text-nude-600">Contracts:</span> {epic.public_api_contract.join(', ')}
-                          </div>
-                        )}
-                        {epic.depends_on_epics && epic.depends_on_epics.length > 0 && (
-                          <div className="ml-10 text-xs text-nude-500 font-mono mt-1">
-                            <span className="text-nude-600">Depends On:</span> {epic.depends_on_epics.join(', ')}
-                          </div>
-                        )}
                       </div>
                     ))
-                  ) : (!project?.plan_steps || project.plan_steps.length === 0) ? (
+                  ) : (
                     <div className="text-center p-12 text-nude-500 font-mono text-sm border border-dashed border-nude-800 rounded-xl">
                       No plan generated yet.
                     </div>
-                  ) : null}
+                  )}
                 </div>
               </div>
             </div>
@@ -477,7 +662,7 @@ export default function Workspace({ projectData, onBack }) {
                 </h2>
                 {/* KNOWLEDGE TAB */}
                 {activeTab === 'graph' && (
-                  <div className="h-[650px] w-full bg-[#101018] border border-nude-800 rounded-lg flex flex-col overflow-hidden relative shadow-lg">
+                  <div className="h-[650px] w-full bg-nude-850 border border-nude-800 rounded-lg flex flex-col overflow-hidden relative shadow-lg">
                     <ArchitectureGraph astNodeCount={workspaceFiles.length * 12} />
                   </div>
                 )}
@@ -486,7 +671,7 @@ export default function Workspace({ projectData, onBack }) {
           </div>
 
           {/* Bottom Terminal */}
-          <section className={`border-t border-nude-700 bg-[#141210] flex flex-col transition-all duration-300 shrink-0 ${isTerminalOpen ? 'h-48' : 'h-10'}`}>
+          <section className={`border-t border-nude-700 bg-nude-850 flex flex-col transition-all duration-300 shrink-0 ${isTerminalOpen ? 'h-48' : 'h-10'}`}>
             <div className="h-10 shrink-0 flex items-center justify-between px-4 border-b border-nude-700/50 cursor-pointer hover:bg-nude-850/50 transition-colors" onClick={() => setIsTerminalOpen(!isTerminalOpen)}>
               <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-widest text-nude-400">
                 <Terminal size={14} /> Terminal Output
@@ -562,7 +747,7 @@ export default function Workspace({ projectData, onBack }) {
                       <Sparkles size={12} />
                     </div>
                     <div ref={currentLlmRef} className="flex-1 text-xs text-nude-200 font-mono pt-1 whitespace-pre-wrap max-h-[350px] overflow-y-auto custom-scrollbar bg-nude-900/50 p-3 rounded-lg border border-nude-800/80 shadow-inner-soft">
-                      {llmText}
+                      {formatAgentMessage(llmText)}
                       {llmStreaming && <span className="inline-block w-1.5 h-4 ml-1 bg-accent animate-pulse align-middle"></span>}
                     </div>
                   </div>

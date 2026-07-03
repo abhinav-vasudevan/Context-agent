@@ -38,7 +38,7 @@ export default function Dashboard({ onProjectOpen }) {
     try {
       const data = await api.listProjects();
       setProjects(data.projects || []);
-    } catch (err) {
+    } catch {
       setError('Cannot connect to backend. Make sure the server is running.');
     } finally {
       setLoading(false);
@@ -308,7 +308,7 @@ export default function Dashboard({ onProjectOpen }) {
                   onClick={() => handleLoadProject(project)}
                 >
                   <div className="w-full flex items-center justify-between mb-3">
-                    <h3 className="font-mono text-nude-200 font-medium truncate pr-2 group-hover:text-white transition-colors">{project.project_name || 'Untitled'}</h3>
+                    <h3 className="font-mono text-nude-200 font-medium truncate pr-2 group-hover:text-nude-50 transition-colors">{project.project_name || 'Untitled'}</h3>
                     {getStatusIcon(project.status)}
                   </div>
                   

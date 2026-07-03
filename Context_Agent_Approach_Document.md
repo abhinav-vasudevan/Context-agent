@@ -147,6 +147,11 @@ If a project is classified as **Massive** (100+ files), generating the entire fi
 
 By forcing generation down to **one Epic at a time**, the system never asks the LLM to exceed its output ceiling, allowing for infinite scaling.
 
+#### 4.2.1 Epic-Driven UI & Adaptive Progress Tracking
+To support Massive scaling on the frontend, the UI dynamically reconfigures its display based on the project's scale:
+- **Collapsible Epic Containers**: Instead of displaying a flat list of 5,000 files, the implementation plan groups steps under their parent Architecture Epics. This keeps the UI clean, highly performant, and logically segmented.
+- **Adaptive Progress**: For `Simple` and `Medium` scale projects, the global progress bar calculates completion based on individual files. But for `Large` and `Massive` projects, calculating based on files creates a noisy, slow-moving progress bar. Instead, the UI dynamically switches to calculate progress based on **Epic completion**, providing a much clearer, high-level health metric of the overall system build.
+
 ### 4.3 Iterative Update Planning (Solving Evolution)
 
 To solve the Evolution Bottleneck (Failure Mode 4), the `MasterPlanner` features a secondary pipeline: `generate_update_plan()`.
@@ -156,7 +161,7 @@ When a user submits a follow-up request on an existing project, the system perfo
 
 These steps are appended directly to the `ProjectState`, allowing the Coder agent to use `<edit_file>` tags to surgically inject the new logic without wiping the old code.
 
-### 4.3 Example: decomposing a massive request
+### 4.4 Example: decomposing a massive request
 
 ```mermaid
 flowchart TD
@@ -406,6 +411,19 @@ Key properties of this loop:
 - **Two layers of checking**: a fast syntax-only check at write time, and a deeper runtime check when the user opts to actually execute the project.
 - **Bounded retries**: the fix loop repeats up to `MAX_FIX_ATTEMPTS` times automatically — it does not retry forever, and escalates to the user if it can't converge.
 - **No silent failure**: every fix attempt is built from the *exact* traceback the sandbox produced, not a guess.
+
+### 9.3 Human-in-the-Loop Interventions (State Rewind)
+
+Despite autonomous self-healing, there are times when the agent writes code that technically compiles and passes tests but is logically or conceptually incorrect. To handle this, the system provides **Interactive State Rewind**.
+
+At any point during the execution of an Epic, the user can click a **Retry (`re`)** button next to any completed, failed, or in-progress step in the UI. 
+When clicked, the Orchestrator executes a hard but graceful intervention:
+1. It intercepts the active LLM generation loop and sets a hard cancellation flag.
+2. It waits for the background tasks and file I/O to safely terminate (preventing corrupted files).
+3. It rewinds the state of the target step and **all subsequent steps** back to `PENDING`.
+4. It autonomously restarts the execution pipeline from the exact point of intervention.
+
+This completely eliminates the need to restart the server or manually delete corrupted files when the LLM hallucinates, giving the user true God-level intervention powers over the autonomous loop.
 
 ---
 

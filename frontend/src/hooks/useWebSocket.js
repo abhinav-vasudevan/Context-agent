@@ -15,7 +15,11 @@ export function useWebSocket(handlers = {}) {
   const isMounted = useRef(true);
 
   // Keep handlers ref current
-  handlersRef.current = handlers;
+  useEffect(() => {
+    handlersRef.current = handlers;
+  }, [handlers]);
+
+  const connectRef = useRef(null);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -54,7 +58,9 @@ export function useWebSocket(handlers = {}) {
       if (!isMounted.current) return;
       setConnected(false);
       // Auto-reconnect after 2 seconds
-      reconnectTimer.current = setTimeout(connect, 2000);
+      reconnectTimer.current = setTimeout(() => {
+        if (connectRef.current) connectRef.current();
+      }, 2000);
     };
 
     ws.onerror = () => {
@@ -63,6 +69,10 @@ export function useWebSocket(handlers = {}) {
 
     wsRef.current = ws;
   }, []);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   useEffect(() => {
     isMounted.current = true;

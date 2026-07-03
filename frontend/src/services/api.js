@@ -66,10 +66,16 @@ export const api = {
     request('/api/execute/all', { method: 'POST' }),
   executeStep: (stepNumber) =>
     request(`/api/execute/step/${stepNumber}`, { method: 'POST' }),
-  retryExecution: () => request('/api/execute/retry', { method: 'POST' }),
+  retryExecution: (stepNumber = null) => 
+    request('/api/execute/retry', { 
+      method: 'POST',
+      body: stepNumber !== null ? JSON.stringify({ step_number: stepNumber }) : undefined
+    }),
   skipExecution: () => request('/api/execute/skip', { method: 'POST' }),
 
   // Process
+  pauseExecution: () => request('/api/pause', { method: 'POST' }),
+  resumeExecution: () => request('/api/resume', { method: 'POST' }),
   sendInput: (text) =>
     request('/api/process/input', {
       method: 'POST',

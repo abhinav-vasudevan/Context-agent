@@ -44,12 +44,19 @@ class RepositoryIngester:
         if on_status:
             on_status("Starting Semantic Analysis of codebase...")
 
-        # 2. Find all python files to summarize
-        paths = list(self.workspace.rglob("*.py"))
-        # Filter out venv, .git, and hidden directories
+        # 2. Find all relevant files to summarize
+        paths = []
+        for ext in ["*.py", "*.js", "*.jsx", "*.ts", "*.tsx", "*.md"]:
+            paths.extend(self.workspace.rglob(ext))
+        # Filter out venv, .git, hidden directories, and common library/cache folders
+        ignored_dirs = {
+            "venv", "env", ".env", ".git", "node_modules", "lib",
+            "__pycache__", "site-packages", "dist", "build",
+            ".pytest_cache", ".mypy_cache"
+        }
         paths = [
             p for p in paths 
-            if "venv" not in p.parts and ".git" not in p.parts and not any(part.startswith('.') for part in p.parts if part != '.agent_brain')
+            if not any(part in ignored_dirs or (part.startswith('.') and part != '.agent_brain') for part in p.parts)
         ]
         
         total_files = len(paths)

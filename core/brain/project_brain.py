@@ -93,7 +93,7 @@ class ProjectBrain:
 
     # ── Architecture Ingestion ────────────────────────────────────────
 
-    def ingest_architecture(self, arch_spec: ArchitectureSpec, project_name: str):
+    def ingest_architecture(self, arch_spec: ArchitectureSpec, project_name: str, clear: bool = False):
         """
         Ingest a full architecture spec into both the Knowledge Graph
         and the Semantic Store.
@@ -106,11 +106,26 @@ class ProjectBrain:
         log.info("Ingesting architecture spec: %s (%d subsystems)",
                  arch_spec.name, len(arch_spec.subsystems))
 
-        # Save architecture spec to disk
-        arch_spec.save(self.arch_spec_path)
+        # Save architecture spec to disk, merging with existing if possible
+        try:
+            if self.arch_spec_path.exists():
+                existing = ArchitectureSpec.load(self.arch_spec_path)
+                if existing:
+                    existing_names = {s.name for s in existing.subsystems}
+                    for s in arch_spec.subsystems:
+                        if s.name not in existing_names:
+                            existing.subsystems.append(s)
+                    existing.save(self.arch_spec_path)
+                else:
+                    arch_spec.save(self.arch_spec_path)
+            else:
+                arch_spec.save(self.arch_spec_path)
+        except Exception:
+            arch_spec.save(self.arch_spec_path)
 
-        # Clear previous graph data for this project
-        self.graph.clear_project(project_name)
+        # Clear previous graph data for this project if requested
+        if clear:
+            self.graph.clear_project(project_name)
 
         # Add the project node
         self.graph.add_node("Project", {"name": project_name, "vision": arch_spec.vision})
@@ -185,10 +200,20 @@ class ProjectBrain:
             from pathlib import Path
             
             log.info("Starting Graphifyy extraction...")
-            # Collect all python files
-            paths = list(self.workspace_dir.rglob("*.py"))
-            # Filter out virtual environments
-            paths = [p for p in paths if "venv" not in p.parts and ".git" not in p.parts]
+            # Collect all python and frontend files
+            paths = []
+            for ext in ["*.py", "*.js", "*.jsx", "*.ts", "*.tsx", "*.md"]:
+                paths.extend(self.workspace_dir.rglob(ext))
+            # Filter out virtual environments and unwanted directories
+            ignored_dirs = {
+                "venv", "env", ".env", ".git", "node_modules", "lib",
+                "__pycache__", "site-packages", "dist", "build",
+                ".pytest_cache", ".mypy_cache"
+            }
+            paths = [
+                p for p in paths 
+                if not any(part in ignored_dirs or (part.startswith('.') and part != '.agent_brain') for part in p.parts)
+            ]
             
             # Extract AST (skipping semantic LLM clustering to save time/tokens)
             extractions = graphify.extract.extract(paths)

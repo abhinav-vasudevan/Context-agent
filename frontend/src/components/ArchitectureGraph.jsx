@@ -126,7 +126,7 @@ export default function ArchitectureGraph({ astNodeCount = 0 }) {
   };
 
   return (
-    <div className="relative w-full h-full bg-[#101018] overflow-hidden font-sans rounded-lg">
+    <div className="relative w-full h-full bg-nude-850 overflow-hidden font-sans rounded-lg">
       
       {/* Search Bar - Top Center/Left */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 w-96">
@@ -137,7 +137,7 @@ export default function ArchitectureGraph({ astNodeCount = 0 }) {
             placeholder="Search knowledge graph..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            className="w-full bg-[#12131c]/90 backdrop-blur border border-nude-800 rounded-full py-2 pl-9 pr-4 text-xs text-nude-200 outline-none focus:border-nude-600 shadow-xl placeholder-nude-600"
+            className="w-full bg-nude-850/90 backdrop-blur border border-nude-800 rounded-full py-2 pl-9 pr-4 text-xs text-nude-200 outline-none focus:border-nude-600 shadow-xl placeholder-nude-600"
           />
         </div>
       </div>
@@ -188,12 +188,12 @@ export default function ArchitectureGraph({ astNodeCount = 0 }) {
       <div className="absolute top-4 left-4 z-10 w-56 flex flex-col gap-4 pointer-events-none">
         
         {/* Network Metrics */}
-        <div className="bg-[#12131c]/90 backdrop-blur border border-nude-800/80 rounded-lg p-4 shadow-xl pointer-events-auto">
+        <div className="bg-nude-850/90 backdrop-blur border border-nude-800/80 rounded-lg p-4 shadow-xl pointer-events-auto">
           <h3 className="text-[9px] font-bold text-nude-500 uppercase tracking-widest mb-3">Network Metrics</h3>
           <div className="flex gap-3">
             <div className="flex-1 bg-nude-900 border border-nude-800 rounded p-2 text-center">
               <div className="text-[10px] text-nude-400 mb-0.5">Nodes</div>
-              <div className="text-sm font-bold text-white">{filteredGraphData.nodes.length}</div>
+              <div className="text-sm font-bold text-nude-50">{filteredGraphData.nodes.length}</div>
             </div>
             <div className="flex-1 bg-nude-900 border border-nude-800 rounded p-2 text-center">
               <div className="text-[10px] text-nude-400 mb-0.5">Edges</div>
@@ -204,14 +204,14 @@ export default function ArchitectureGraph({ astNodeCount = 0 }) {
 
         {/* AST Stats */}
         {astNodeCount > 0 && (
-          <div className="bg-[#12131c]/90 backdrop-blur border border-nude-800/80 rounded-lg p-3 shadow-xl pointer-events-auto flex items-center justify-between">
+          <div className="bg-nude-850/90 backdrop-blur border border-nude-800/80 rounded-lg p-3 shadow-xl pointer-events-auto flex items-center justify-between">
             <div className="text-[10px] text-nude-400">AST Indexing</div>
             <div className="text-[10px] text-[#4ade80] font-mono">{astNodeCount} nodes</div>
           </div>
         )}
 
         {/* Taxonomies & Legend */}
-        <div className="bg-[#12131c]/90 backdrop-blur border border-nude-800/80 rounded-lg p-4 shadow-xl pointer-events-auto">
+        <div className="bg-nude-850/90 backdrop-blur border border-nude-800/80 rounded-lg p-4 shadow-xl pointer-events-auto">
           <h3 className="text-[9px] font-bold text-nude-500 uppercase tracking-widest mb-3">Active Taxonomies</h3>
           <div className="space-y-3 text-[11px] text-nude-300">
             <div className="flex items-center justify-between">
@@ -236,7 +236,7 @@ export default function ArchitectureGraph({ astNodeCount = 0 }) {
       </div>
 
       {/* Top-Right: Node Inspector */}
-      <div className="absolute top-4 right-4 z-10 w-72 bg-[#12131c]/90 backdrop-blur border border-nude-800/80 rounded-lg shadow-2xl flex flex-col max-h-[calc(100%-80px)]">
+      <div className="absolute top-4 right-4 z-10 w-72 bg-nude-850/90 backdrop-blur border border-nude-800/80 rounded-lg shadow-2xl flex flex-col max-h-[calc(100%-80px)]">
         <div className="p-3 border-b border-nude-800/50 flex items-center gap-2 text-xs font-bold text-nude-200 uppercase tracking-wider">
           <Info size={14} className="text-nude-500" /> Node Inspector
         </div>
@@ -244,15 +244,15 @@ export default function ArchitectureGraph({ astNodeCount = 0 }) {
         <div className="p-4 overflow-y-auto custom-scrollbar flex-1">
           {selectedNode ? (
             <div>
-              <h2 className="text-sm font-bold text-white mb-4 break-all">{selectedNode.id}</h2>
+              <h2 className="text-sm font-bold text-nude-50 mb-4 break-all">{selectedNode.id}</h2>
               <div className="space-y-3 text-xs text-nude-400">
                 <div className="flex justify-between border-b border-nude-800/50 pb-1.5">
                   <span>Type</span>
-                  <span className="text-white">{selectedNode.labels?.[0] || 'Unknown'}</span>
+                  <span className="text-nude-50">{selectedNode.labels?.[0] || 'Unknown'}</span>
                 </div>
                 <div className="flex justify-between border-b border-nude-800/50 pb-1.5">
                   <span>Degree</span>
-                  <span className="text-white">
+                  <span className="text-nude-50">
                     {filteredGraphData.links.filter(l => l.source.id === selectedNode.id || (l.target && l.target.id === selectedNode.id)).length}
                   </span>
                 </div>
@@ -267,7 +267,7 @@ export default function ArchitectureGraph({ astNodeCount = 0 }) {
                     return (
                       <div 
                         key={neighbor.id} 
-                        className="text-[11px] p-2 bg-[#1e1e2d] border border-nude-800 rounded hover:border-[#ffaa00] hover:text-white cursor-pointer transition-colors"
+                        className="text-[11px] p-2 bg-nude-700 border border-nude-800 rounded hover:border-[#ffaa00] hover:text-nude-50 cursor-pointer transition-colors"
                         onClick={() => handleNodeClick(neighbor)}
                       >
                         {neighbor.id}
@@ -289,14 +289,14 @@ export default function ArchitectureGraph({ astNodeCount = 0 }) {
 
       {/* Bottom-Right: Map Controls */}
       <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-2">
-        <button onClick={handleRecenter} title="Recenter Graph" className="w-8 h-8 bg-[#12131c]/90 backdrop-blur border border-nude-800 rounded flex items-center justify-center text-nude-400 hover:text-white hover:bg-nude-800 transition-colors shadow-lg">
+        <button onClick={handleRecenter} title="Recenter Graph" className="w-8 h-8 bg-nude-850/90 backdrop-blur border border-nude-800 rounded flex items-center justify-center text-nude-400 hover:text-nude-50 hover:bg-nude-800 transition-colors shadow-lg">
           <Target size={16} />
         </button>
-        <div className="bg-[#12131c]/90 backdrop-blur border border-nude-800 rounded flex flex-col shadow-lg overflow-hidden">
-          <button onClick={() => handleZoom('in')} title="Zoom In" className="w-8 h-8 flex items-center justify-center text-nude-400 hover:text-white hover:bg-nude-800 transition-colors border-b border-nude-800">
+        <div className="bg-nude-850/90 backdrop-blur border border-nude-800 rounded flex flex-col shadow-lg overflow-hidden">
+          <button onClick={() => handleZoom('in')} title="Zoom In" className="w-8 h-8 flex items-center justify-center text-nude-400 hover:text-nude-50 hover:bg-nude-800 transition-colors border-b border-nude-800">
             <Plus size={16} />
           </button>
-          <button onClick={() => handleZoom('out')} title="Zoom Out" className="w-8 h-8 flex items-center justify-center text-nude-400 hover:text-white hover:bg-nude-800 transition-colors">
+          <button onClick={() => handleZoom('out')} title="Zoom Out" className="w-8 h-8 flex items-center justify-center text-nude-400 hover:text-nude-50 hover:bg-nude-800 transition-colors">
             <Minus size={16} />
           </button>
         </div>

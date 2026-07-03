@@ -52,7 +52,7 @@ class Coder:
         """
         log.info("Coder: generating code for step %d (%s) using V2 context", step.step_number, step.file_path)
 
-        system_prompt = "You are an elite Software Engineer. You must output the entire file content. Never use placeholders like '# ...'."
+        system_prompt = "You are an elite Software Engineer. You must output the entire file content. Never use placeholders like '# ...' or '// ...'."
         
         prompt = f"TASK:\n{step.description}\n\nFILE PATH:\n{step.file_path}\n\nCONTEXT:\n{context_text}\n\n"
         
@@ -60,7 +60,7 @@ class Coder:
             prompt += f"EXISTING SKELETON:\n{stub_content}\n\n"
             prompt += "Implement the actual logic inside the provided skeleton. You MUST return the complete file."
         else:
-            prompt += "Write the complete, runnable Python code now."
+            prompt += "Write the complete, runnable code for the requested file now."
 
         chunks = []
         try:
@@ -313,8 +313,14 @@ class Coder:
                 return match.group(1).strip()
             return raw_output.strip()
 
-        # Look for python code blocks with backticks (```python or ```). Allow unclosed blocks (EOF).
-        blocks_backticks = re.findall(r'```(?:python|py)?\s*\n(.*?)(?:```|\Z)', raw_output, re.DOTALL | re.IGNORECASE)
+        # Look for code blocks with backticks (```python, ```javascript, ```jsx, etc). Allow unclosed blocks (EOF).
+        lang_hint = self._get_lang_hint(file_path)
+        if lang_hint:
+            lang_blocks = re.findall(r'```' + lang_hint + r'\s*\n(.*?)(?:```|\Z)', raw_output, re.DOTALL | re.IGNORECASE)
+            if lang_blocks:
+                return lang_blocks[-1].strip()
+        # Generic: match any fenced code block
+        blocks_backticks = re.findall(r'```(?:python|py|javascript|js|jsx|typescript|ts|tsx|css|html|json|sh|bash)?\s*\n(.*?)(?:```|\Z)', raw_output, re.DOTALL | re.IGNORECASE)
         if blocks_backticks:
             return blocks_backticks[-1].strip()
 
@@ -347,6 +353,25 @@ class Coder:
         cleaned = re.sub(r'\n\s*(?:```|r?\'\'\'|r?""")?\s*$', '', cleaned)
         
         return cleaned
+
+    @staticmethod
+    def _get_lang_hint(file_path: str) -> str:
+        """Return the markdown fence language hint for a file extension."""
+        ext_map = {
+            '.py': 'python',
+            '.js': 'javascript',
+            '.jsx': 'jsx',
+            '.ts': 'typescript',
+            '.tsx': 'tsx',
+            '.css': 'css',
+            '.html': 'html',
+            '.json': 'json',
+            '.sh': 'bash',
+        }
+        for ext, lang in ext_map.items():
+            if file_path.endswith(ext):
+                return lang
+        return ''
 
     async def _generate_summary(self, file_path: str, code: str) -> str:
         """Generate a concrete 1-sentence summary of the code."""

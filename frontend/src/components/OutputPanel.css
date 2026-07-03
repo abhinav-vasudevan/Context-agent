@@ -14,7 +14,7 @@
   overflow-y: auto;
   padding: var(--space-md);
   min-height: 250px;
-  background: #000000;
+  background: #fafaf9;
 }
 
 .output-empty {
@@ -44,7 +44,7 @@
   color: #ef4444;
 }
 .output-line.input {
-  color: #ffffff;
+  color: #fafaf9;
   font-weight: 500;
 }
 
@@ -73,7 +73,7 @@
   transition: all var(--transition-fast);
 }
 .input-wrapper:focus-within {
-  border-color: #ffffff;
+  border-color: #fafaf9;
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.06);
 }
 

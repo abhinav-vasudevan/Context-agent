@@ -36,7 +36,7 @@ Traditional AI coding agents fail on large codebases because they attempt to cra
 ### Phase 1: Complexity Analysis & Hierarchical Planning (V2 Architecture)
 1. **Scale Classification**: Before generating a single line of code, the system analyzes the complexity of the prompt and classifies the project into one of four buckets: **Simple** (1-5 files), **Medium** (5-30 files), **Large** (30-100 files), or **Massive** (100+ files, e.g., Cloud OS, ERP).
 2. **Vision & Subsystems**: For Large and Massive projects, the `MasterPlanner` deduces overarching architectural constraints and breaks the system down into concrete **Epics** and **Subsystems**.
-3. **JIT (Just-In-Time) Epic Planning**: To prevent context window overflow on Massive projects, the system does *not* plan all 5,000 files upfront. Instead, it enters a JIT Loop where it asks for approval on the Epics, and then dynamically plans the specific Services and Modules for Epic 1, executes them, and then moves to Epic 2.
+3. **JIT (Just-In-Time) Epic Planning & UI Grouping**: To prevent context window overflow on Massive projects, the system does *not* plan all 5,000 files upfront. Instead, it enters a JIT Loop where it asks for approval on the Epics, and then dynamically plans the specific Services and Modules for Epic 1, executes them, and then moves to Epic 2. The frontend dynamically renders this plan grouped by Epics, acting as collapsible containers to keep the UI clean even at massive scales.
 4. **Iterative Follow-Ups**: If the user submits a follow-up prompt on an existing project, the Orchestrator's **Intent Routing** layer classifies if it's a bug fix or a feature request. Feature requests generate an **Update Plan** by reading the existing Graph and appending surgical `[NEW]` or `[MODIFY]` steps to the queue, entirely preserving previous work!
 5. **Approval**: The backend pauses and awaits the user's explicit approval (`/api/plan/approve`) before execution.
 
@@ -55,7 +55,11 @@ Once the plan is approved, the `Orchestrator` begins the execution loop step-by-
    - **Pyright** (`pyright`): Performs deep semantic type-checking to catch logic errors, mismatched function signatures, and complex inheritance issues across the whole project graph.
    - **Semgrep** (`semgrep scan`): Scans the codebase for security vulnerabilities, hardcoded secrets, and complex AST-level anti-patterns.
 3. **Deep Semantic Fixer Loop**: The Analyzer extracts the JSON output from all three tools (Ruff, Pyright, and Semgrep) and aggregates them into a highly structured Fix Prompt. The `Fixer` agent receives this unified error report. Acting as an advanced automated debugger, it explores the workspace using `<view_file>`, cross-references the semantic errors with the actual files, and patches the code using precise `<edit_file>` `<<<<<<< SEARCH` and `>>>>>>> REPLACE` blocks. It repeats this autonomously until all three semantic analyzers pass perfectly.
-4. **Graph Ingestion**: Once a file is stable, the `Summarizer` agent reads the code, and the `ProjectBrain` ingests the file's AST into Neo4j and its semantic summary into ChromaDB, updating the Graphifyy knowledge base for future context queries.
+4. **Interactive State Rewind & Retry**: At any point during execution, if a step fails or produces conceptually flawed code, the user can hit the **Retry (`re`)** button in the UI. The Orchestrator gracefully intercepts this, instantly cancels the active LLM generation/background tasks, rewinds the step status state, and autonomously restarts the execution pipeline from the exact point of intervention.
+5. **Graph Ingestion**: Once a file is stable, the `Summarizer` agent reads the code, and the `ProjectBrain` ingests the file's AST into Neo4j and its semantic summary into ChromaDB, updating the Graphifyy knowledge base for future context queries.
+
+### 📊 Adaptive Progress Tracking
+The UI intelligently scales its visual feedback based on the project size. For `Simple` and `Medium` projects, the global progress bar tracks individual file steps. For `Large` and `Massive` projects, the progress bar dynamically recalculates to track **Epic completion**, providing a much more accurate high-level health metric for massive codebases.
 
 ---
 

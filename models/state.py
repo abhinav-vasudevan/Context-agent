@@ -12,9 +12,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional, List, Dict
 from datetime import datetime
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 
-from models.hierarchy import EpicSpec, ProjectScale
+from models.hierarchy import EpicSpec
 
 
 class StepStatus(str, Enum):
@@ -92,6 +92,7 @@ class PlanStep:
     description: str                                      # detailed description of what to implement
     depends_on: List[int] = field(default_factory=list)   # step numbers this depends on
     status: StepStatus = StepStatus.PENDING
+    epic_id: Optional[str] = None                         # ID of the Epic this step belongs to
     summary: str = ""                                     # concrete summary after completion
     error: str = ""                                       # last error if failed
     attempts: int = 0                                     # number of attempts made
@@ -217,6 +218,7 @@ class ProjectState:
                     "file_path": s.file_path,
                     "description": s.description,
                     "status": s.status.value,
+                    "epic_id": s.epic_id,
                     "summary": s.summary,
                     "error": s.error,
                 }
@@ -310,6 +312,7 @@ class ProjectState:
                     "description": s.description,
                     "depends_on": s.depends_on,
                     "status": s.status.value,
+                    "epic_id": getattr(s, "epic_id", None),
                     "summary": s.summary,
                     "error": s.error,
                     "attempts": s.attempts,
@@ -373,19 +376,21 @@ class ProjectState:
         state.venv_path = data.get("venv_path", "")
 
         # Rebuild plan steps
-        for sd in data.get("plan_steps", []):
-            step = PlanStep(
-                step_number=sd["step_number"],
-                title=sd["title"],
-                file_path=sd["file_path"],
-                description=sd["description"],
-                depends_on=sd.get("depends_on", []),
-                status=StepStatus(sd.get("status", "pending")),
-                summary=sd.get("summary", ""),
-                error=sd.get("error", ""),
-                attempts=sd.get("attempts", 0),
+        state.plan_steps = [
+            PlanStep(
+                step_number=s["step_number"],
+                title=s["title"],
+                file_path=s["file_path"],
+                description=s["description"],
+                depends_on=s.get("depends_on", []),
+                status=StepStatus(s.get("status", "pending")),
+                epic_id=s.get("epic_id", None),
+                summary=s.get("summary", ""),
+                error=s.get("error", ""),
+                attempts=s.get("attempts", 0),
             )
-            state.plan_steps.append(step)
+            for s in data.get("plan_steps", [])
+        ]
 
         # Rebuild file registry
         for fd in data.get("file_registry", []):

@@ -60,7 +60,7 @@
   border-left: 3px solid var(--success);
 }
 .plan-step.in_progress {
-  border-left: 3px solid #ffffff;
+  border-left: 3px solid #fafaf9;
   background: rgba(255, 255, 255, 0.02);
 }
 .plan-step.failed {
@@ -76,7 +76,7 @@
 }
 
 .step-icon.completed { color: var(--success); }
-.step-icon.progress { color: #ffffff; animation: spin 1.5s linear infinite; }
+.step-icon.progress { color: #fafaf9; animation: spin 1.5s linear infinite; }
 .step-icon.failed { color: var(--error); }
 .step-icon.pending { color: var(--text-muted); }
 
@@ -113,7 +113,7 @@
   word-break: break-all;
 }
 .step-file:hover {
-  color: #ffffff;
+  color: #fafaf9;
   text-decoration: underline;
 }
 

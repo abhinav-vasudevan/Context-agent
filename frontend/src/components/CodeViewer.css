@@ -48,7 +48,7 @@
 }
 .sidebar-file.active {
   background: rgba(255, 255, 255, 0.06);
-  color: #ffffff;
+  color: #fafaf9;
 }
 
 .sidebar-empty {
@@ -80,7 +80,7 @@
   flex: 1;
   overflow: auto;
   min-height: 300px;
-  background: #000000;
+  background: #fafaf9;
 }
 
 .code-content {

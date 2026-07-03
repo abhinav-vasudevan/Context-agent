@@ -158,14 +158,14 @@ class Fixer:
         )
 
         # 4. Agentic Loop with retry tracking
-        max_iterations = 5
+        max_iterations = 30
         current_prompt = ctx["prompt"]
         system_prompt = ctx["system"]
         fixed_files_list = []
         brief_plan = "Fixed bugs."
         # Track SEARCH/REPLACE failures per file to escalate to full rewrite
         search_fail_counts = {}
-        MAX_SEARCH_FAILURES = 3
+        MAX_SEARCH_FAILURES = 15
         
         for iteration in range(max_iterations):
             log.info("Fixer: agent loop iteration %d/%d", iteration + 1, max_iterations)
@@ -210,7 +210,14 @@ class Fixer:
                         fpath = fpath.lstrip("/")
                     full_path = self.workspace / fpath
                     if full_path.exists():
-                        system_reply += f"--- {fpath} ---\n```python\n{full_path.read_text(encoding='utf-8')}\n```\n\n"
+                        # Detect language for proper code fence
+                        lang = 'python'
+                        ext_map = {'.js': 'javascript', '.jsx': 'jsx', '.ts': 'typescript', '.tsx': 'tsx', '.css': 'css', '.html': 'html'}
+                        for ext, l in ext_map.items():
+                            if fpath.endswith(ext):
+                                lang = l
+                                break
+                        system_reply += f"--- {fpath} ---\n```{lang}\n{full_path.read_text(encoding='utf-8')}\n```\n\n"
                     else:
                         system_reply += f"--- {fpath} ---\nFILE NOT FOUND\n\n"
                 
@@ -394,15 +401,22 @@ class Fixer:
                         )
                         
                         if fail_count >= MAX_SEARCH_FAILURES:
+                            # Detect the language hint for the file
+                            lang = 'python'
+                            ext_map = {'.js': 'javascript', '.jsx': 'jsx', '.ts': 'typescript', '.tsx': 'tsx', '.css': 'css', '.html': 'html'}
+                            for ext, l in ext_map.items():
+                                if fpath.endswith(ext):
+                                    lang = l
+                                    break
                             # Escalate: demand full file rewrite
                             current_prompt += (
                                 f"SYSTEM:\nSEARCH/REPLACE has failed {fail_count} times for {fpath}. "
                                 f"The SEARCH blocks do not match the actual file content (comments or whitespace differ). "
-                                f"You MUST now output the ENTIRE complete rewritten file for {fpath} inside a single ```python block. "
+                                f"You MUST now output the ENTIRE complete rewritten file for {fpath} inside a single ```{lang} block. "
                                 f"Do NOT use SEARCH/REPLACE anymore for this file. "
                                 f"Use this format:\n"
                                 f"# FILE: {fpath}\n"
-                                f"```python\n"
+                                f"```{lang}\n"
                                 f"[entire file content here]\n"
                                 f"```\n\n"
                             )

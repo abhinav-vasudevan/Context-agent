@@ -11,7 +11,7 @@ All models are JSON-serializable for checkpoint/resume support.
 from __future__ import annotations
 import uuid
 import json
-from typing import List, Dict, Optional
+from typing import List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path

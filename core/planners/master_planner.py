@@ -21,7 +21,10 @@ from __future__ import annotations
 import logging
 import re
 import json
-from typing import Optional, Callable, List
+from typing import Optional, Callable, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from models.state import ProjectState
 
 from core.llm_client import LLMClient
 from models.hierarchy import (
@@ -578,7 +581,7 @@ Break each subsystem into concrete services and file modules now."""
     async def generate_update_plan(
         self,
         prompt: str,
-        state: "ProjectState",
+        state: ProjectState,
         on_token: Optional[Callable] = None,
         on_thinking: Optional[Callable] = None,
     ) -> list:

@@ -94,6 +94,13 @@ class Orchestrator:
         self._retry_event: Optional[asyncio.Event] = None
         self._skip_requested = False
 
+        # Manual Pause/Resume control
+        self._manual_pause_event = asyncio.Event()
+        self._manual_pause_event.set()  # Default to running (not paused)
+        
+        # Concurrency locks
+        self._ingestion_lock = asyncio.Lock()
+
     # ── Project Lifecycle ─────────────────────────────────────────────
 
     async def create_project(self, name: str, prompt: str = "", target_dir: str = None) -> dict:
@@ -176,6 +183,10 @@ class Orchestrator:
         self.state = ProjectState.load(state_file)
         if not self.state:
             return {"success": False, "error": "Failed to parse project state"}
+            
+        if self.state.status == "executing":
+            self.state.status = "paused"
+            self.state.save(state_file)
 
         # Re-initialize all agents
         self.llm = LLMClient()
@@ -205,31 +216,41 @@ class Orchestrator:
         if not self.state or not self.ingester:
             return {"success": False, "error": "No project loaded"}
 
-        await self.ws.send_status("ingesting", "Starting Codebase Ingestion Pipeline...")
-        
-        def on_status(msg: str):
-            asyncio.create_task(self.ws.send_status("ingesting", msg))
+        if self._ingestion_lock.locked():
+            await self.ws.send_status("warning", "Ingestion is already running.")
+            return {"success": False, "error": "Already ingesting"}
+
+        async with self._ingestion_lock:
+            await self.ws.send_status("ingesting", "Starting Codebase Ingestion Pipeline...")
             
-        def on_progress(current: int, total: int, current_file: str):
-            if total > 0:
-                percent = (current / total) * 100
-                asyncio.create_task(self.ws.send_progress(percent, f"Ingesting: {current_file}"))
+            def on_status(msg: str):
+                asyncio.create_task(self.ws.send_status("ingesting", msg))
+                
+            def on_progress(current: int, total: int, current_file: str):
+                if total > 0:
+                    percent = (current / total) * 100
+                    asyncio.create_task(self.ws.send_progress(percent, f"Ingesting: {current_file}"))
+                
+            success = await self.ingester.ingest_repository(on_status=on_status, on_progress=on_progress)
             
-        success = await self.ingester.ingest_repository(on_status=on_status, on_progress=on_progress)
-        
-        if success:
-            await self.ws.send_status("ready", "Codebase ingestion completed successfully.")
-            return {"success": True}
-        else:
-            await self.ws.send_status("error", "Codebase ingestion failed.")
-            return {"success": False, "error": "Ingestion failed"}
+            if success:
+                await self.ws.send_status("ready", "Codebase ingestion completed successfully.")
+                return {"success": True}
+            else:
+                await self.ws.send_status("error", "Codebase ingestion failed.")
+                return {"success": False, "error": "Ingestion failed"}
 
     # ── Planning ──────────────────────────────────────────────────────
 
     async def generate_plan(self, prompt: str = "") -> dict:
         """Generate the implementation plan using V2 Hierarchical Planning."""
-        if not self.state or not self.master_planner:
-            return {"success": False, "error": "No project loaded"}
+        
+        if self._ingestion_lock.locked():
+            await self.ws.send_status("planning", "Waiting for codebase ingestion to finish before planning...")
+            
+        async with self._ingestion_lock:
+            if not self.state or not self.master_planner:
+                return {"success": False, "error": "No project loaded"}
 
         if prompt:
             self.state.original_prompt = prompt
@@ -375,6 +396,7 @@ class Orchestrator:
             epics_to_run = self.state.epic_queue if self.state.project_scale in ["large", "massive"] else [None]
             
             for epic_idx, epic in enumerate(epics_to_run):
+                await self._manual_pause_event.wait()
                 if self._cancel_requested:
                     break
                     
@@ -383,42 +405,66 @@ class Orchestrator:
                         continue
                     resume_epic_id = None
                     
+                    has_valid_plan = bool(self.state.plan_steps and self.state.current_epic_id == epic.id)
                     self.state.current_epic_id = epic.id
                     await self.ws.send_status("executing", f"--- Epic {epic_idx+1}/{len(epics_to_run)}: {epic.name} ---")
                     
                     # JIT Sprint Planning for this Epic
-                    await self.ws.send_status("planning", f"JIT Planning for {epic.name}...")
-                    
-                    def on_sprint_token(token: str):
-                        asyncio.ensure_future(self.ws.send_llm_token(token))
+                    if has_valid_plan:
+                        await self.ws.send_status("planning", f"Skipping Sprint Plan (already exists) for {epic.name}...")
                         
-                    epic = await self.master_planner.generate_sprint_plan(
-                        epic, 
-                        self.state.get_file_registry_string(), 
-                        on_token=on_sprint_token
-                    )
-                    
-                    # Flatten just this epic to plan steps
-                    arch_spec = ArchitectureSpec(name=epic.name, subsystems=[epic.subsystem])
-                    self.state.plan_steps = self.master_planner.flatten_to_plan_steps(arch_spec)
-                    
-                    # Send updated plan to UI
-                    plan_data = [
-                        {"step_number": s.step_number, "title": s.title, "file_path": s.file_path, "status": s.status.value}
-                        for s in self.state.plan_steps
-                    ]
-                    await self.ws.send_plan_update(plan_data)
-                    self.state.save(self.workspace_dir / "project_state.json")
+                        # Ingest the architecture into the graph in case it hasn't been (or the server restarted)
+                        arch_spec = ArchitectureSpec(name=epic.name, subsystems=[epic.subsystem])
+                        if self.brain:
+                            self.brain.ingest_architecture(arch_spec, self.state.project_name)
+                    else:
+                        await self.ws.send_status("planning", f"JIT Planning for {epic.name}...")
+                        
+                        def on_sprint_token(token: str):
+                            asyncio.ensure_future(self.ws.send_llm_token(token))
+                            
+                        epic = await self.master_planner.generate_sprint_plan(
+                            epic, 
+                            self.state.get_file_registry_string(), 
+                            on_token=on_sprint_token
+                        )
+                        
+                        # Flatten just this epic to plan steps
+                        arch_spec = ArchitectureSpec(name=epic.name, subsystems=[epic.subsystem])
+                        new_steps = self.master_planner.flatten_to_plan_steps(arch_spec)
+                        
+                        start_offset = len(self.state.plan_steps)
+                        for s in new_steps:
+                            s.step_number += start_offset
+                            s.epic_id = epic.id
+                            
+                        self.state.plan_steps.extend(new_steps)
+                        
+                        if self.brain:
+                            self.brain.ingest_architecture(arch_spec, self.state.project_name)
+                        
+                        # Send updated plan to UI
+                        plan_data = [
+                            {"step_number": s.step_number, "title": s.title, "file_path": s.file_path, "status": s.status.value, "epic_id": getattr(s, "epic_id", None)}
+                            for s in self.state.plan_steps
+                        ]
+                        await self.ws.send_plan_update(plan_data)
+                        self.state.save(self.workspace_dir / "project_state.json")
 
                 # ── Phase 0: Skeleton Scaffolding (Contract-First) ──────────────
                 uncompleted_steps = [s for s in self.state.plan_steps if s.status != StepStatus.COMPLETED]
                 if uncompleted_steps:
+                    first_step = uncompleted_steps[0]
+                    first_step.status = StepStatus.IN_PROGRESS
+                    await self.ws.send_step_update(first_step.step_number, "in_progress", f"Scaffolding {first_step.title}...")
+                    
                     await self.ws.send_status("scaffolding", "Phase 0: Generating Contract-First skeleton stubs...")
                     
                     # Convert PlanSteps to ModuleSpecs for ArchitectAgent, or use templates
+                    CODE_EXTENSIONS = ('.py', '.js', '.jsx', '.ts', '.tsx')
                     modules = []
                     for step in uncompleted_steps:
-                        if step.file_path.endswith(".py"):
+                        if any(step.file_path.endswith(ext) for ext in CODE_EXTENSIONS):
                             template_name = self.template_engine.get_template_for_file(step.file_path)
                             if template_name:
                                 # Provide context for template rendering
@@ -443,6 +489,11 @@ class Orchestrator:
                             asyncio.ensure_future(self.ws.send_llm_token(token))
                         
                         stubs = await self.architect.generate_stubs(modules, on_token=on_stub_token)
+                        
+                        if self._cancel_requested:
+                            await self.ws.send_status("cancelled", "Execution cancelled by user")
+                            break
+                            
                         for file_path, content in stubs.items():
                             full_path = self.workspace_dir / file_path
                             full_path.parent.mkdir(parents=True, exist_ok=True)
@@ -452,6 +503,11 @@ class Orchestrator:
                         # ── Phase 8: Generate TDD Tests ──
                         await self.ws.send_status("scaffolding", "Generating TDD tests for stubs...")
                         tests = await self.test_generator.generate_tests(stubs, on_token=on_stub_token)
+                        
+                        if self._cancel_requested:
+                            await self.ws.send_status("cancelled", "Execution cancelled by user")
+                            break
+                            
                         for test_file_path, test_content in tests.items():
                             full_path = self.workspace_dir / test_file_path
                             full_path.parent.mkdir(parents=True, exist_ok=True)
@@ -463,6 +519,7 @@ class Orchestrator:
                 # ── Phase 1: Write ALL files ──────────────────────────────
                 await self.ws.send_status("executing", "Phase 1: Generating implementation logic...")
                 for i, step in enumerate(self.state.plan_steps):
+                    await self._manual_pause_event.wait()
                     if self._cancel_requested:
                         await self.ws.send_status("cancelled", "Execution cancelled by user")
                         break
@@ -479,16 +536,19 @@ class Orchestrator:
                 all_written = all(s.status == StepStatus.COMPLETED for s in self.state.plan_steps)
                 if not all_written:
                     self.state.status = "paused"
-                await self.ws.send_status("paused", "File generation paused due to error.")
-                self.state.save(self.workspace_dir / "project_state.json")
-                return {"success": False, "project": self.state.to_api_dict()}
+                    await self.ws.send_status("paused", "File generation paused due to error.")
+                    self.state.save(self.workspace_dir / "project_state.json")
+                    return {"success": False, "project": self.state.to_api_dict()}
 
             # ── Phase 2: Install requirements.txt (with permission) ──
             req_path = self.workspace_dir / "requirements.txt"
-            if req_path.exists():
+            pkg_path_root = self.workspace_dir / "package.json"
+            pkg_path_frontend = self.workspace_dir / "frontend" / "package.json"
+            
+            if req_path.exists() or pkg_path_root.exists() or pkg_path_frontend.exists():
                 req_id = str(uuid.uuid4())
                 await self.ws.send_permission_request(
-                    req_id, "Install dependencies from requirements.txt?", default=True
+                    req_id, "Install project dependencies (pip/npm)?", default=True
                 )
                 self._permission_event = asyncio.Event()
                 try:
@@ -498,17 +558,31 @@ class Orchestrator:
 
                 if self._permission_response:
                     await self.ws.send_status("installing", "Phase 2: Installing dependencies...")
-                    install_res = await self.runner.install_requirements(
-                        on_stdout=lambda text: asyncio.ensure_future(self.ws.send_process_stdout(text)),
-                        on_stderr=lambda text: asyncio.ensure_future(self.ws.send_process_stderr(text)),
-                    )
-                    if install_res.success:
-                        await self.ws.send_status("installed", "Dependencies installed successfully!")
-                    else:
-                        await self.ws.send_error(
-                            install_res.error or install_res.stderr, "requirements.txt"
+                    
+                    if req_path.exists():
+                        install_res = await self.runner.install_requirements(
+                            on_stdout=lambda text: asyncio.ensure_future(self.ws.send_process_stdout(text)),
+                            on_stderr=lambda text: asyncio.ensure_future(self.ws.send_process_stderr(text)),
                         )
+                        if install_res.success:
+                            await self.ws.send_status("installed", "Python dependencies installed successfully!")
+                        else:
+                            await self.ws.send_error(
+                                install_res.error or install_res.stderr, "requirements.txt"
+                            )
 
+                    if pkg_path_root.exists() or pkg_path_frontend.exists():
+                        await self.ws.send_status("installing", "Phase 2: Installing npm dependencies...")
+                        npm_res = await self.runner.install_npm_requirements(
+                            on_stdout=lambda text: asyncio.ensure_future(self.ws.send_process_stdout(text)),
+                            on_stderr=lambda text: asyncio.ensure_future(self.ws.send_process_stderr(text)),
+                        )
+                        if npm_res.success:
+                            await self.ws.send_status("installed", "NPM dependencies installed successfully!")
+                        else:
+                            await self.ws.send_error(
+                                npm_res.error or npm_res.stderr, "package.json"
+                            )
 
             # ── Phase 4: QA Agent tests main.py ──────────────────────
             main_path = self.workspace_dir / "main.py"
@@ -516,7 +590,7 @@ class Orchestrator:
                 await self.ws.send_status("testing", "Phase 4: QA Agent testing main.py...")
                 await self._run_qa_test_loop()
 
-            # ── Done ─────────────────────────────────────────────────
+            # ── Done with all Epics ──────────────────────────────────────
             self.state.status = "completed"
             self.state.save(self.workspace_dir / "project_state.json")
             CheckpointManager.clear(self.workspace_dir)
@@ -562,6 +636,7 @@ class Orchestrator:
         """
         Execute a single plan step using V2 Context Engine.
         """
+        await self._manual_pause_event.wait()
         await self.ws.send_step_update(step.step_number, "in_progress", f"Working on {step.title}...")
         step.status = StepStatus.IN_PROGRESS
         self.state.save(self.workspace_dir / "project_state.json")
@@ -658,7 +733,8 @@ class Orchestrator:
                             await self.ws.send_error(f"Failed to fix test failures.", step.file_path)
 
             # ── V2: Summarization & Storage ──
-            if step.file_path.endswith(".py"):
+            SUMMARIZABLE_EXTENSIONS = ('.py', '.js', '.jsx', '.ts', '.tsx')
+            if any(step.file_path.endswith(ext) for ext in SUMMARIZABLE_EXTENSIONS):
                 await self.ws.send_status("verifying", f"Summarizing {step.file_path} for Project Brain...")
                 summary = await self.summarizer.summarize_file(step.file_path, code_content)
                 if summary:
@@ -695,6 +771,9 @@ class Orchestrator:
                         await self.ws.send_file_update("main.py", main_path.read_text(encoding="utf-8"))
 
         # Mark complete
+        if self._cancel_requested:
+            return {"success": False, "continued": False, "error": "Cancelled"}
+
         step.status = StepStatus.COMPLETED
         self.state.completed_steps.add(step.step_number)
         self.state.save(self.workspace_dir / "project_state.json")
@@ -762,6 +841,7 @@ class Orchestrator:
         target_file = file_path
 
         while attempts < config.MAX_FIX_ATTEMPTS:
+            await self._manual_pause_event.wait()
             attempts += 1
 
             # Smart error targeting — find the actual file from the traceback
@@ -797,6 +877,8 @@ class Orchestrator:
                 "thinking": "".join(fix_thinking_chunks)
             })
             self.state.save(self.workspace_dir / "project_state.json")
+
+
 
             if not success:
                 await self.ws.send_error(msg, target_file)
@@ -856,15 +938,81 @@ class Orchestrator:
         await self.ws.send_error(f"Max fix attempts ({config.MAX_FIX_ATTEMPTS}) reached.", file_path)
         return False
 
-    async def retry_execution(self) -> dict:
-        """Resume execution after a paused state (user clicked 'Retry')."""
-        if not self._paused:
-            return {"success": False, "error": "System is not paused"}
+    async def retry_execution(self, target_step_number: Optional[int] = None) -> dict:
+        """Retry execution after a paused state. Redos the current step, or the last completed step."""
+        if not self.state:
+            return {"success": False, "error": "No active project"}
+            
+        step_to_retry_idx = -1
         
-        self._skip_requested = False
-        if self._retry_event:
-            self._retry_event.set()
+        if target_step_number is not None:
+            for i, step in enumerate(self.state.plan_steps):
+                if step.step_number == target_step_number:
+                    step_to_retry_idx = i
+                    break
+        else:
+            for i, step in enumerate(self.state.plan_steps):
+                if step.status in [StepStatus.IN_PROGRESS, StepStatus.FAILED]:
+                    step_to_retry_idx = i
+                    break
+                    
+            if step_to_retry_idx == -1:
+                for i, step in enumerate(self.state.plan_steps):
+                    if step.status == StepStatus.PENDING:
+                        if i > 0:
+                            step_to_retry_idx = i - 1
+                        break
+                        
+            if step_to_retry_idx == -1 and self.state.plan_steps:
+                step_to_retry_idx = len(self.state.plan_steps) - 1
+            
+        if target_step_number is None:
+            # Walk backwards to find the last step that is a code file (not .md or .txt)
+            while step_to_retry_idx >= 0:
+                file_path = self.state.plan_steps[step_to_retry_idx].file_path
+                if file_path and not (file_path.endswith('.md') or file_path.endswith('.txt')):
+                    break
+                step_to_retry_idx -= 1
+            
+        if step_to_retry_idx < 0 and self.state.plan_steps:
+            step_to_retry_idx = 0
+            
+        if step_to_retry_idx >= 0:
+            self.state.plan_steps[step_to_retry_idx].status = StepStatus.PENDING
+            for i in range(step_to_retry_idx + 1, len(self.state.plan_steps)):
+                self.state.plan_steps[i].status = StepStatus.PENDING
+            self.state.save(self.workspace_dir / "project_state.json")
+            
+            plan_data = [
+                {"step_number": s.step_number, "title": s.title, "file_path": s.file_path, "status": s.status.value, "epic_id": getattr(s, "epic_id", None)}
+                for s in self.state.plan_steps
+            ]
+            await self.ws.send_plan_update(plan_data)
+
+        if self._executing:
+            self._cancel_requested = True
+            self._manual_pause_event.set()
+            if self.runner:
+                await self.runner.kill_process()
+
+        self.state.status = "executing"
+        self.state.save(self.workspace_dir / "project_state.json")
+        await self.ws.send_status("executing", f"Retrying from step {step_to_retry_idx + 1}...")
         
+        import asyncio
+        async def _restart_when_ready():
+            while getattr(self, "_executing", False):
+                await asyncio.sleep(0.5)
+                
+            self._paused = False
+            self._cancel_requested = False
+            self._skip_requested = False
+            self._manual_pause_event.set()
+            
+            await self.execute_all()
+            
+        asyncio.create_task(_restart_when_ready())
+            
         return {"success": True, "message": "Retrying..."}
 
     async def skip_execution(self) -> dict:
@@ -1070,10 +1218,34 @@ USER REQUEST:
         if not self.workspace_dir:
             return []
         files = []
-        for item in self.workspace_dir.rglob("*"):
-            if item.is_file():
-                rel = item.relative_to(self.workspace_dir).as_posix()
-                if "/venv/" in f"/{rel}" or "__pycache__" in rel or "/.agent_brain/" in f"/{rel}":
+        for path in self.workspace_dir.rglob("*"):
+            if path.is_file():
+                # Ignore hidden directories, virtual environments, and caches
+                if any(ignored in path.parts for ignored in [".git", "__pycache__", ".pytest_cache", ".agent_brain", "venv", "graphify-out", "node_modules", "dist", "build"]):
                     continue
-                files.append(rel)
+                files.append(path.relative_to(self.workspace_dir).as_posix())
         return sorted(files)
+
+    async def pause_execution(self) -> dict:
+        """Manually pause the execution loop."""
+        self._manual_pause_event.clear()
+        if self.state:
+            self.state.status = "paused"
+            self.state.save(self.workspace_dir / "project_state.json")
+        await self.ws.send_status("paused", "Execution paused manually.")
+        return {"success": True}
+
+    async def resume_execution(self) -> dict:
+        """Manually resume the execution loop."""
+        self._manual_pause_event.set()
+        if self.state:
+            self.state.status = "executing"
+            self.state.save(self.workspace_dir / "project_state.json")
+        await self.ws.send_status("executing", "Execution resumed.")
+        
+        # If the server was restarted, the execution loop won't be running. Start it!
+        if getattr(self, "_executing", False) is False:
+            import asyncio
+            asyncio.create_task(self.execute_all())
+            
+        return {"success": True}
