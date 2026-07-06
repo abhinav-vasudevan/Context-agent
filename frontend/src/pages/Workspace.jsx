@@ -10,7 +10,9 @@ export default function Workspace({ projectData, onBack }) {
   const [project, setProject] = useState(projectData);
   const [prompt, setPrompt] = useState(projectData?.original_prompt || '');
   const [status, setStatus] = useState(projectData?.status || 'idle');
+  const [statusDetail, setStatusDetail] = useState('');
   const [progress, setProgress] = useState(null);
+  const [autoApprovePlan, setAutoApprovePlan] = useState(false);
   
   // Tabs
   const [activeTab, setActiveTab] = useState('code'); // code or knowledge
@@ -107,6 +109,7 @@ export default function Workspace({ projectData, onBack }) {
     },
     status: (data) => {
       setStatus(data.status);
+      setStatusDetail(data.detail || '');
       if (data.status === 'idle' || data.status === 'completed' || data.status === 'error') {
         setProgress(null);
       }
@@ -192,9 +195,13 @@ export default function Workspace({ projectData, onBack }) {
 
   useEffect(() => {
     if (status === 'plan_review') {
-      setTimeout(() => setActiveTab('plan'), 0);
+      if (autoApprovePlan) {
+        api.approvePlan().then(() => api.executeAll());
+      } else {
+        setTimeout(() => setActiveTab('plan'), 0);
+      }
     }
-  }, [status]);
+  }, [status, autoApprovePlan]);
 
   const handleSendPrompt = (e) => {
     e.preventDefault();
@@ -291,10 +298,19 @@ export default function Workspace({ projectData, onBack }) {
           </div>
         </div>
         <div className="flex items-center gap-3 text-xs font-mono uppercase tracking-widest text-nude-500">
+          <label className="flex items-center gap-2 cursor-pointer hover:text-nude-300 transition-colors bg-nude-850 px-2 py-1 rounded-md border border-nude-700 select-none">
+            <input 
+              type="checkbox" 
+              className="accent-accent cursor-pointer"
+              checked={autoApprovePlan}
+              onChange={(e) => setAutoApprovePlan(e.target.checked)}
+            />
+            <span className={autoApprovePlan ? "text-accent" : ""}>Auto-Approve Plan</span>
+          </label>
           {status !== 'idle' && (
             <span className="flex items-center gap-2 bg-nude-800 px-2 py-1 rounded-md border border-nude-700">
               <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse"></span>
-              {status}
+              {status} {statusDetail && <span className="text-nude-400 normal-case tracking-normal ml-1 border-l border-nude-700 pl-2">({statusDetail})</span>}
             </span>
           )}
         </div>

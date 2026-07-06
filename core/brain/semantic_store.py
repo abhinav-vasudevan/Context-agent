@@ -11,7 +11,6 @@ While the Knowledge Graph stores *relationships*, the Semantic Store stores *mea
 
 from __future__ import annotations
 import logging
-import json
 from typing import List, Dict, Optional, Any
 from pathlib import Path
 
@@ -196,6 +195,23 @@ class SemanticStore:
                 files.append(entry)
 
         return files
+
+    def get_file_summary(self, file_path: str) -> str:
+        """Get the semantic summary for a specific file path."""
+        collection = self._get_or_create_collection(self.FILES_COLLECTION)
+        if not collection:
+            return ""
+        
+        try:
+            results = collection.get(
+                where={"file_path": file_path},
+                limit=1
+            )
+            if results and results["documents"] and len(results["documents"]) > 0:
+                return results["documents"][0]
+        except Exception as e:
+            log.warning("Failed to get file summary: %s", e)
+        return ""
 
     # ── Architecture Specs ────────────────────────────────────────────
 

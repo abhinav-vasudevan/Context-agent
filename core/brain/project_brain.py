@@ -17,14 +17,13 @@ from __future__ import annotations
 import logging
 import json
 from pathlib import Path
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Any
 
 import config
 from core.brain.knowledge_graph import KnowledgeGraph
 from core.brain.semantic_store import SemanticStore
 from models.hierarchy import (
-    ArchitectureSpec, SubsystemSpec, ServiceSpec, ModuleSpec,
-    ArchitectureDecisionRecord, SemanticSummary,
+    ArchitectureSpec, ArchitectureDecisionRecord, SemanticSummary,
 )
 
 log = logging.getLogger(__name__)
@@ -193,7 +192,6 @@ class ProjectBrain:
         Runs Graphifyy AST extraction across the workspace and ingests the raw
         semantic symbols and edges into Neo4j.
         """
-        import os
         try:
             import graphify.extract
             import graphify.build

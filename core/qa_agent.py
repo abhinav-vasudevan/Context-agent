@@ -11,7 +11,6 @@ process via stdin/stdout piping.
 from __future__ import annotations
 import asyncio
 import logging
-import re
 import time
 from dataclasses import dataclass
 from typing import Optional, Callable, List
@@ -174,7 +173,7 @@ class QAAgent:
                 # Detect if the output ends with an input prompt
                 if self._looks_like_input_prompt(text):
                     if on_status:
-                        on_status(f"QA Agent: Detected input prompt, reasoning about response...")
+                        on_status("QA Agent: Detected input prompt, reasoning about response...")
 
                     input_response = await self._reason_about_input(
                         stdout_text_so_far,

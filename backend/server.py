@@ -15,7 +15,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
 
@@ -103,8 +102,8 @@ async def update_model(req: UpdateModelRequest):
     if orchestrator.llm:
         from core.llm_client import LLMClient
         orchestrator.llm = LLMClient()
-        if orchestrator.planner:
-            orchestrator.planner.llm = orchestrator.llm
+        if orchestrator.master_planner:
+            orchestrator.master_planner.llm = orchestrator.llm
         if orchestrator.coder:
             orchestrator.coder.llm = orchestrator.llm
         if orchestrator.fixer:
@@ -310,14 +309,6 @@ async def list_files():
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time communication with the frontend."""
     await ws_manager.connect(websocket)
-    
-    # Auto-resume semantic analysis if project is already completed
-    if orchestrator.state and orchestrator.state.status == "completed":
-        if not getattr(orchestrator, "_executing", False):
-            async def auto_run():
-                await asyncio.sleep(0.5) # Wait for WS connection to stabilize
-                await orchestrator.execute_all()
-            asyncio.create_task(auto_run())
 
     try:
         while True:

@@ -68,9 +68,9 @@ Output ONLY the JSON object. No markdown. No explanation."""
         # Detect language for proper code fence
         lang = 'python'
         ext_map = {'.js': 'javascript', '.jsx': 'jsx', '.ts': 'typescript', '.tsx': 'tsx', '.css': 'css', '.html': 'html', '.md': 'markdown'}
-        for ext, l in ext_map.items():
+        for ext, lang_name in ext_map.items():
             if file_path.endswith(ext):
-                lang = l
+                lang = lang_name
                 break
 
         prompt = f"FILE PATH: {file_path}\n\nSOURCE CODE:\n```{lang}\n{truncated_code}\n```"

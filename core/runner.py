@@ -17,9 +17,9 @@ import asyncio
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, List, Callable, Awaitable
+from typing import Optional, Callable, Awaitable
 
 import config
 
@@ -328,7 +328,7 @@ class Runner:
                 while True:
                     try:
                         chunk = await process.stdout.read(256)
-                    except (asyncio.CancelledError, ValueError):
+                    except Exception:
                         break
                     if not chunk:
                         break
@@ -366,7 +366,7 @@ class Runner:
                 while True:
                     try:
                         chunk = await process.stderr.read(256)
-                    except (asyncio.CancelledError, ValueError):
+                    except Exception:
                         break
                     if not chunk:
                         break
@@ -623,7 +623,7 @@ class Runner:
                 while True:
                     try:
                         chunk = await process.stdout.read(256)
-                    except (asyncio.CancelledError, ValueError):
+                    except Exception:
                         break
                     if not chunk:
                         break
@@ -636,7 +636,7 @@ class Runner:
                 while True:
                     try:
                         chunk = await process.stderr.read(256)
-                    except (asyncio.CancelledError, ValueError):
+                    except Exception:
                         break
                     if not chunk:
                         break
@@ -707,7 +707,7 @@ class Runner:
                 while True:
                     try:
                         chunk = await process.stdout.read(256)
-                    except (asyncio.CancelledError, ValueError):
+                    except Exception:
                         break
                     if not chunk:
                         break
@@ -720,7 +720,7 @@ class Runner:
                 while True:
                     try:
                         chunk = await process.stderr.read(256)
-                    except (asyncio.CancelledError, ValueError):
+                    except Exception:
                         break
                     if not chunk:
                         break
@@ -790,7 +790,7 @@ class Runner:
                 while True:
                     try:
                         chunk = await process.stdout.read(256)
-                    except (asyncio.CancelledError, ValueError):
+                    except Exception:
                         break
                     if not chunk:
                         break
@@ -803,7 +803,7 @@ class Runner:
                 while True:
                     try:
                         chunk = await process.stderr.read(256)
-                    except (asyncio.CancelledError, ValueError):
+                    except Exception:
                         break
                     if not chunk:
                         break
@@ -838,11 +838,22 @@ class Runner:
             return RunResult(success=False, error=str(e))
 
     async def create_venv(self) -> RunResult:
-        """Create a virtual environment for the project."""
+        """Create a virtual environment for the project, or use an existing one."""
         if self.venv_path and self.venv_path.exists():
             return RunResult(success=True, stdout="venv already exists")
 
         if not self.venv_path:
+            # Check for existing common venv directory names
+            for venv_name in ["venv", ".venv", "env", ".env"]:
+                potential_path = self.workspace / venv_name
+                if (potential_path / "bin" / "python").exists() or \
+                   (potential_path / "Scripts" / "python.exe").exists() or \
+                   (potential_path / "bin" / "python3").exists():
+                    self.venv_path = potential_path
+                    log.info("Runner: found existing venv at %s", self.venv_path)
+                    return RunResult(success=True, stdout=f"found existing venv at {venv_name}")
+
+            # Fallback to creating a new one
             self.venv_path = self.workspace / "venv"
 
         log.info("Runner: creating venv at %s", self.venv_path)

@@ -147,6 +147,12 @@ class Coder:
                 fpath = m.group(1).strip()
                 code = m.group(2).strip()
                 full_path = self.workspace / fpath
+                
+                if not self._syntax_runner.security.is_within_workspace(full_path, self.workspace):
+                    system_reply += f"--- SECURITY BLOCKED: Path traversal attempt to {fpath} ---\n"
+                    action_taken = True
+                    continue
+                    
                 full_path.parent.mkdir(parents=True, exist_ok=True)
                 full_path.write_text(code, encoding="utf-8")
                 system_reply += f"--- Successfully wrote to {fpath} ---\n"
@@ -159,6 +165,11 @@ class Coder:
                 fpath = m.group(1).strip()
                 edit_blocks = m.group(2)
                 full_path = self.workspace / fpath
+                
+                if not self._syntax_runner.security.is_within_workspace(full_path, self.workspace):
+                    system_reply += f"--- SECURITY BLOCKED: Path traversal attempt to {fpath} ---\n"
+                    action_taken = True
+                    continue
                 
                 if not full_path.exists():
                     system_reply += f"--- Edit Failed: {fpath} does not exist ---\n"
@@ -236,58 +247,7 @@ class Coder:
 
         return True, None
 
-    async def update_main_integration(
-        self,
-        new_file_entry: FileEntry,
-        on_token=None,
-        on_thinking=None,
-    ) -> Tuple[bool, Optional[str]]:
-        """
-        Update main.py to import and use a newly created module.
-        """
-        main_path = self.workspace / "main.py"
-        if not main_path.exists():
-            return False, "main.py does not exist yet"
 
-        if not new_file_entry.classes and not new_file_entry.functions:
-            return True, "Skipped integration: module exports no classes or functions"
-
-        current_main = main_path.read_text(encoding="utf-8")
-        
-        ctx = self.assembler.build_main_update_prompt(current_main, new_file_entry)
-
-        chunks = []
-        async for chunk in self.llm.generate_stream(
-            prompt=ctx["prompt"],
-            system=ctx["system"],
-            on_token=on_token,
-            on_thinking=on_thinking,
-        ):
-            chunks.append(chunk)
-
-        raw_output = "".join(chunks)
-        code = self._extract_code(raw_output, "main.py")
-
-        # Basic safety check: if LLM returned nothing or something tiny, don't overwrite
-        if len(code) < 10:
-            return False, "LLM returned invalid main.py update"
-
-        # Save updated main.py
-        main_path.write_text(code, encoding="utf-8")
-        
-        # Syntax check
-        syntax_result = await self._syntax_runner.syntax_check("main.py")
-        if not syntax_result.success:
-            # Revert main.py
-            main_path.write_text(current_main, encoding="utf-8")
-            return False, f"Syntax Error in updated main.py:\n{syntax_result.error}"
-
-        # Update registry
-        entry = FileRegistryBuilder.parse_file(main_path, "main.py")
-        if entry:
-            self._update_registry(entry)
-
-        return True, None
 
     def _update_registry(self, new_entry: FileEntry):
         """Update or add a file entry in the project registry."""

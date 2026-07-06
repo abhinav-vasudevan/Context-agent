@@ -7,17 +7,14 @@ file registries, and always asking for permission before execution.
 """
 
 from __future__ import annotations
-import os
 import sys
-import time
-from typing import Optional, List
+from typing import List
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 from rich.text import Text
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
-from rich.layout import Layout
 from rich.live import Live
 from rich.table import Table
 
@@ -110,10 +107,12 @@ class TerminalUI:
         def on_token(self, token: str):
             self.content += token
             # Update panel content. Rich can handle basic formatting.
-            self.panel.renderable = self.content
+            if self.panel:
+                self.panel.renderable = self.content
             
         def __exit__(self, exc_type, exc_val, exc_tb):
-            self.live.stop()
+            if self.live:
+                self.live.stop()
             if exc_type:
                 # If an error occurred, print it
                 pass

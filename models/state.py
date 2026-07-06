@@ -160,6 +160,7 @@ class ProjectState:
     # V2 Project Brain Tracking
     brain_path: str = ""                       # path to .agent_brain directory
     hierarchy_spec_path: str = ""              # path to architecture_spec.json
+    ingested_architecture_notes: str = ""      # text output from UnderstandingAgent
 
     def increment_llm_calls(self, tokens: int = 0):
         """Track LLM usage."""
@@ -240,6 +241,7 @@ class ProjectState:
             "project_scale": self.project_scale,
             "epic_queue": [e.to_dict() for e in self.epic_queue],
             "current_epic_id": self.current_epic_id,
+            "ingested_architecture_notes": self.ingested_architecture_notes,
         }
 
     # ── Serialization ─────────────────────────────────────────────────
@@ -303,6 +305,7 @@ class ProjectState:
             "epic_queue": [e.to_dict() for e in self.epic_queue],
             "current_epic_id": self.current_epic_id,
             "original_prompt": self.original_prompt,
+            "architecture_text": self.architecture_text,
             "plan_text": self.plan_text,
             "plan_steps": [
                 {
@@ -344,6 +347,7 @@ class ProjectState:
             "updated_at": self.updated_at,
             "workspace_path": self.workspace_path,
             "venv_path": self.venv_path,
+            "ingested_architecture_notes": self.ingested_architecture_notes,
         }
 
     @classmethod
@@ -360,6 +364,7 @@ class ProjectState:
             state.epic_queue.append(EpicSpec.from_dict(ed))
 
         state.original_prompt = data.get("original_prompt", "")
+        state.architecture_text = data.get("architecture_text", "")
         state.plan_text = data.get("plan_text", "")
         state.plan_approved = data.get("plan_approved", False)
         state.current_step = data.get("current_step", 0)
@@ -374,6 +379,7 @@ class ProjectState:
         state.updated_at = data.get("updated_at")
         state.workspace_path = data.get("workspace_path", "")
         state.venv_path = data.get("venv_path", "")
+        state.ingested_architecture_notes = data.get("ingested_architecture_notes", "")
 
         # Rebuild plan steps
         state.plan_steps = [

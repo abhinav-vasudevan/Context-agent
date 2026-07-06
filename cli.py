@@ -6,7 +6,6 @@ For the web UI, use: python -m backend.server
 """
 
 import asyncio
-import os
 import sys
 import re
 from pathlib import Path
@@ -158,23 +157,12 @@ async def main():
 
         ui.print_success(f"Generated {step.file_path}")
 
-        # Update main.py integration if it's a src/ file
-        if step.file_path.startswith("src/") and step.file_path.endswith(".py"):
-            ui.print_step("Integration", f"Updating main.py to import {step.file_path}...")
-            # Find the new file entry
-            new_entry = next((e for e in state.file_registry if e.path == step.file_path), None)
-            if new_entry:
-                with ui.stream_llm("Updating main.py...") as stream:
-                    main_success, main_error = await coder.update_main_integration(new_entry, on_token=stream.on_token)
 
-                if main_success:
-                    ui.print_success("main.py updated.")
-                else:
-                    ui.print_warning(f"Could not automatically update main.py: {main_error}")
 
         # Execution / Verification
         if step.file_path.endswith(".py"):
-            target_to_run = "main.py" if step.file_path.startswith("src/") else step.file_path
+            main_path = workspace_dir / "main.py"
+            target_to_run = "main.py" if (step.file_path.startswith("src/") and main_path.exists()) else step.file_path
 
             # CRITICAL: Security requirement - ALWAYS ask before execution
             if ui.ask_permission(f"Execute {target_to_run} to verify?", default=True):

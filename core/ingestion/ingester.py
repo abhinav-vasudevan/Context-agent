@@ -1,10 +1,10 @@
 import logging
 from pathlib import Path
 from typing import Callable, Optional
-import asyncio
 
 from core.brain.project_brain import ProjectBrain
 from core.agents.summarizer import SummarizerAgent
+from core.agents.understanding_agent import UnderstandingAgent
 
 log = logging.getLogger(__name__)
 
@@ -16,10 +16,11 @@ class RepositoryIngester:
     2. Runs deep semantic analysis on every file to populate ChromaDB.
     """
     
-    def __init__(self, workspace: Path, brain: ProjectBrain, summarizer: SummarizerAgent):
+    def __init__(self, workspace: Path, brain: ProjectBrain, summarizer: SummarizerAgent, understanding_agent: Optional[UnderstandingAgent] = None):
         self.workspace = workspace
         self.brain = brain
         self.summarizer = summarizer
+        self.understanding_agent = understanding_agent
 
     async def ingest_repository(
         self,
@@ -83,6 +84,20 @@ class RepositoryIngester:
 
         if on_progress:
             on_progress(total_files, total_files, "Complete")
+            
+        # 4. Synthesize overall architecture
+        if self.understanding_agent:
+            if on_status:
+                on_status("Understanding Codebase Architecture...")
+            try:
+                def on_understanding_token(token: str):
+                    # We could broadcast these tokens if we want, but for now just silence it
+                    pass
+                arch_text = await self.understanding_agent.analyze_codebase(on_token=on_understanding_token)
+                # We need to return this so the orchestrator can save it in project_state
+                self.brain.latest_architecture_notes = arch_text
+            except Exception as e:
+                log.warning(f"Understanding phase failed: {e}")
             
         if on_status:
             on_status(f"Successfully ingested {total_files} files into Project Brain.")

@@ -1,9 +1,8 @@
 import logging
-from typing import Dict, List, Optional
+from typing import Dict
 from pathlib import Path
 
 from core.llm_client import LLMClient
-from models.hierarchy import ModuleSpec
 
 log = logging.getLogger(__name__)
 

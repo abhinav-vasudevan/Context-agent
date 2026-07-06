@@ -19,8 +19,7 @@ because it never loads the entire codebase — only the relevant subgraph.
 
 from __future__ import annotations
 import logging
-from typing import Dict, List, Optional, Any
-from pathlib import Path
+from typing import Dict, List
 
 from core.brain.project_brain import ProjectBrain
 from core.llm_client import LLMClient

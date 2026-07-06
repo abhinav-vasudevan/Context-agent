@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 from core.llm_client import LLMClient
 from models.hierarchy import (
     ArchitectureSpec, SubsystemSpec, ServiceSpec, ModuleSpec,
-    ArchitectureDecisionRecord, NodeStatus, EpicSpec, ProjectScale,
+    ArchitectureDecisionRecord, EpicSpec, ProjectScale,
 )
 
 log = logging.getLogger(__name__)
@@ -110,10 +110,11 @@ You must output a STRICT JSON object with this schema:
 
 MANDATORY RULES:
 1. File paths MUST use a domain-driven folder structure (e.g. backend/api.py, frontend/app.js, core/memory.py) rather than a single src/ folder.
-2. The LAST code file MUST ALWAYS be main.py at the root. Do NOT schedule main.py as Step 1. It must be generated after all other code files so it can correctly import and connect them.
+2. If generating a project from scratch, output main.py at the root as the LAST code file step. If modifying an existing codebase, do NOT schedule main.py unless it is explicitly required by the user's prompt. Do not assume main.py is the only entry point.
 3. The very last file overall is ALWAYS README.md.
 4. Include a requirements.txt or package.json as needed.
-5. Keep descriptions EXTREMELY short (1 sentence max) to save tokens."""
+5. Keep descriptions EXTREMELY short (1 sentence max) to save tokens.
+6. NO HALLUCINATIONS: Do NOT add AI/LLM integrations (e.g. ollama, openai, httpx) unless the user's prompt explicitly requests them. Assume the existing codebase provides necessary tools unless told otherwise."""
 
     COMPLEXITY_SYSTEM_PROMPT = """You are a Principal Software Architect determining the scale of a project.
 Analyze the user's request and classify its complexity.
@@ -670,7 +671,7 @@ Output the JSON array of steps."""
             lines.append(f"\n### {sub.name}")
             lines.append(f"  Purpose: {sub.purpose}")
             if sub.responsibilities:
-                lines.append(f"  Responsibilities:")
+                lines.append("  Responsibilities:")
                 for r in sub.responsibilities:
                     lines.append(f"    - {r}")
             if sub.services:

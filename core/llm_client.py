@@ -17,7 +17,6 @@ import logging
 import asyncio
 import time
 from typing import AsyncIterator, Optional, Callable
-import os
 
 import config
 
@@ -153,7 +152,6 @@ class LLMClient:
             on_thinking: Optional sync callback for each thinking token (for UI updates)
             stop: Optional list of stop sequences
         """
-        last_error = None
         current_max_tokens = 8192
         attempt = 0
         while True:
@@ -162,7 +160,6 @@ class LLMClient:
                     yield token
                 return  # Success — exit retry loop
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as e:
-                last_error = e
                 if attempt < config.OLLAMA_MAX_RETRIES - 1:
                     wait = config.OLLAMA_RETRY_BACKOFF * (2 ** attempt)
                     log.warning(
@@ -202,7 +199,6 @@ class LLMClient:
                         log.error("HTTP 413 Payload Too Large and prompt is already small (%d tokens). Cannot recover.", prompt_tokens)
                         raise RuntimeError(f"HTTP 413 Payload Too Large and prompt is already small ({prompt_tokens} tokens). Cannot recover.")
                 elif e.response.status_code == 429 or e.response.status_code >= 500:
-                    last_error = e
                     # For 429s, allow up to 10 attempts since rate limits (e.g. Tokens per Minute) can take 60s to clear.
                     max_attempts = 10 if e.response.status_code == 429 else config.OLLAMA_MAX_RETRIES
                     
@@ -567,7 +563,7 @@ class LLMClient:
                         except json.JSONDecodeError:
                             continue
 
-        except Exception as e:
+        except Exception:
             # Let generate_stream handle the errors and retries
             raise
 

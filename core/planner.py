@@ -292,39 +292,7 @@ class Planner:
         for i, step in enumerate(steps):
             step.step_number = i + 1
 
-        # Check if ANY step is main.py
-        main_step = next((s for s in steps if s.file_path.endswith("main.py")), None)
-        
-        if main_step:
-            main_step.file_path = "main.py"
-            main_step.description = (
-                "Create a completely empty file. Do NOT write any imports. "
-                "Only write an empty `if __name__ == '__main__':` block. "
-                "The system will automatically populate this file later."
-            )
-            # If it's not the first step, move it to the front
-            if steps[0] != main_step:
-                steps.remove(main_step)
-                steps.insert(0, main_step)
-        else:
-            log.warning("No main.py step found in plan. Inserting one.")
-            # Insert a main.py step at the beginning
-            main_step = PlanStep(
-                step_number=1,
-                title="Create main.py entry point",
-                file_path="main.py",
-                description=(
-                    "Create the main entry point for the project. "
-                    "Include 'import sys, os; sys.path.insert(0, os.path.join(os.path.dirname(__file__), \"src\"))' "
-                    "at the top, then a basic if __name__ == '__main__' block that will be "
-                    "updated as new modules are added."
-                ),
-            )
-            steps.insert(0, main_step)
-            
-        # Renumber all steps
-        for i, step in enumerate(steps):
-            step.step_number = i + 1
+        # We no longer force a main.py step. The LLM Planner should dynamically find or create the entry point.
 
         # Ensure source files have src/ prefix (except main.py and README.md)
         for step in steps:

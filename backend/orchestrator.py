@@ -29,13 +29,14 @@ from core.retrieval.context_engine import ContextEngine
 from core.agents.integration_agent import IntegrationAgent
 from core.agents.summarizer import SummarizerAgent
 from core.agents.architect_agent import ArchitectAgent
+from core.agents.understanding_agent import UnderstandingAgent
 from core.agents.test_generator import TestGeneratorAgent
 from core.checkpoint import CheckpointManager
 from core.analyzer import IncrementalVerifier
 from core.ingestion.ingester import RepositoryIngester
 from core.templates.template_engine import TemplateEngine
 from models.state import ProjectState, StepStatus, PlanStep
-from models.hierarchy import ArchitectureSpec, SubsystemSpec, ModuleSpec
+from models.hierarchy import ArchitectureSpec, ModuleSpec
 from backend.ws_manager import ConnectionManager
 
 log = logging.getLogger(__name__)
@@ -71,6 +72,7 @@ class Orchestrator:
         self.test_generator: Optional[TestGeneratorAgent] = None
         self.verifier: Optional[IncrementalVerifier] = None
         self.ingester: Optional[RepositoryIngester] = None
+        self.understanding_agent: Optional[UnderstandingAgent] = None
         self.template_engine: Optional[TemplateEngine] = None
         
         self.workspace_dir: Optional[Path] = None
@@ -161,9 +163,10 @@ class Orchestrator:
         self.summarizer = SummarizerAgent(self.llm)
         self.architect = ArchitectAgent(self.llm)
         self.test_generator = TestGeneratorAgent(self.llm)
+        self.understanding_agent = UnderstandingAgent(self.llm, self.brain)
         venv_path = Path(self.state.venv_path) if self.state.venv_path else None
         self.verifier = IncrementalVerifier(self.workspace_dir, venv_path)
-        self.ingester = RepositoryIngester(self.workspace_dir, self.brain, self.summarizer)
+        self.ingester = RepositoryIngester(self.workspace_dir, self.brain, self.summarizer, self.understanding_agent)
         self.template_engine = TemplateEngine()
 
         self.state.status = "idle"
@@ -204,8 +207,9 @@ class Orchestrator:
         self.summarizer = SummarizerAgent(self.llm)
         self.architect = ArchitectAgent(self.llm)
         self.test_generator = TestGeneratorAgent(self.llm)
+        self.understanding_agent = UnderstandingAgent(self.llm, self.brain)
         self.verifier = IncrementalVerifier(self.workspace_dir, venv_path)
-        self.ingester = RepositoryIngester(self.workspace_dir, self.brain, self.summarizer)
+        self.ingester = RepositoryIngester(self.workspace_dir, self.brain, self.summarizer, self.understanding_agent)
         self.template_engine = TemplateEngine()
 
         await self.ws.send_status("ready", f"Project '{self.state.project_name}' loaded")
@@ -231,14 +235,28 @@ class Orchestrator:
                     percent = (current / total) * 100
                     asyncio.create_task(self.ws.send_progress(percent, f"Ingesting: {current_file}"))
                 
-            success = await self.ingester.ingest_repository(on_status=on_status, on_progress=on_progress)
-            
-            if success:
-                await self.ws.send_status("ready", "Codebase ingestion completed successfully.")
-                return {"success": True}
-            else:
-                await self.ws.send_status("error", "Codebase ingestion failed.")
-                return {"success": False, "error": "Ingestion failed"}
+            try:
+                success = await self.ingester.ingest_repository(on_status=on_status, on_progress=on_progress)
+                
+                if success:
+                    if hasattr(self.brain, 'latest_architecture_notes'):
+                        # Save to state memory for planners to reference
+                        if not hasattr(self.state, 'ingested_architecture_notes'):
+                            self.state.ingested_architecture_notes = ""
+                        self.state.ingested_architecture_notes = self.brain.latest_architecture_notes
+                        self.state.save(self.workspace_dir / "project_state.json")
+                    
+                    await self.ws.send_status("ready", "Codebase ingestion completed successfully.")
+                    return {"success": True}
+                else:
+                    await self.ws.send_status("error", "Codebase ingestion failed.")
+                    return {"success": False, "error": "Ingestion failed"}
+            except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
+                log.error(f"Ingestion aborted due to unexpected error:\\n{error_details}")
+                await self.ws.send_status("error", f"Codebase ingestion failed unexpectedly: {str(e)}")
+                return {"success": False, "error": str(e)}
 
     # ── Planning ──────────────────────────────────────────────────────
 
@@ -261,6 +279,9 @@ class Orchestrator:
             return {"success": False, "error": "No prompt provided"}
 
         planning_prompt = self.state.original_prompt
+        if getattr(self.state, "ingested_architecture_notes", ""):
+            planning_prompt = f"Existing Codebase Architecture Context:\n{self.state.ingested_architecture_notes}\n\nUSER REQUEST:\n{planning_prompt}"
+            
         if SmartChunker.needs_chunking(planning_prompt):
             chunks = SmartChunker.chunk(planning_prompt)
             planning_prompt = chunks[0] + "\n\n[Prompt truncated for planning...]"
@@ -602,6 +623,16 @@ class Orchestrator:
                 "project": self.state.to_api_dict(),
                 "usage": usage,
             }
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            log.error(f"Execution aborted due to unexpected error:\\n{error_details}")
+            self.state.status = "error"
+            try:
+                await self.ws.send_status("error", f"Execution failed unexpectedly: {str(e)}")
+            except Exception:
+                pass
+            return {"success": False, "error": str(e)}
         finally:
             self._executing = False
 
@@ -628,6 +659,14 @@ class Orchestrator:
                 await self.ws.send_status("paused", f"Step {step_number} finished. Paused.")
 
             return result
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            log.error(f"Step execution aborted due to unexpected error:\n{error_details}")
+            await self.ws.send_status("error", f"Step execution failed unexpectedly: {str(e)}")
+            self.state.status = "failed"
+            self.state.save(self.workspace_dir / "project_state.json")
+            return {"success": False, "error": str(e)}
         finally:
             self._executing = False
             self.state.save(self.workspace_dir / "project_state.json")
@@ -709,7 +748,7 @@ class Orchestrator:
                     if fixed:
                         code_content = file_path.read_text(encoding="utf-8")
                     else:
-                        await self.ws.send_error(f"Failed to fix lint/type errors.", step.file_path)
+                        await self.ws.send_error("Failed to fix lint/type errors.", step.file_path)
 
             # ── Phase 8: Test-First Verification (TDD) ──
             if step.file_path.endswith(".py"):
@@ -730,7 +769,7 @@ class Orchestrator:
                         if fixed:
                             code_content = file_path.read_text(encoding="utf-8")
                         else:
-                            await self.ws.send_error(f"Failed to fix test failures.", step.file_path)
+                            await self.ws.send_error("Failed to fix test failures.", step.file_path)
 
             # ── V2: Summarization & Storage ──
             SUMMARIZABLE_EXTENSIONS = ('.py', '.js', '.jsx', '.ts', '.tsx')
@@ -750,25 +789,7 @@ class Orchestrator:
                 self.state.file_registry = [e for e in self.state.file_registry if e.path != step.file_path]
                 self.state.file_registry.append(entry)
 
-        # ── Main.py Integration (for src/ files) ──
-        if step.file_path.startswith("src/") and step.file_path.endswith(".py"):
-            await self.ws.send_status("integrating", f"Updating main.py to import {step.file_path}...")
-            new_entry = next((e for e in self.state.file_registry if e.path == step.file_path), None)
-            if new_entry:
-                int_chunks = []
-                def on_int_token(token: str):
-                    int_chunks.append(token)
-                    asyncio.ensure_future(self.ws.send_llm_token(token))
-                def on_int_thinking(token: str):
-                    asyncio.ensure_future(self.ws.send_llm_thinking(token))
 
-                main_success, main_error = await self.coder.update_main_integration(new_entry, on_token=on_int_token, on_thinking=on_int_thinking)
-                await self.ws.send_llm_done("".join(int_chunks))
-
-                if main_success:
-                    main_path = self.workspace_dir / "main.py"
-                    if main_path.exists():
-                        await self.ws.send_file_update("main.py", main_path.read_text(encoding="utf-8"))
 
         # Mark complete
         if self._cancel_requested:
@@ -818,7 +839,7 @@ class Orchestrator:
             await self.ws.send_error(error_text, "main.py")
 
             if attempt < config.MAX_QA_ATTEMPTS:
-                await self.ws.send_status("fixing", f"QA Agent found issues. Auto-fixing...")
+                await self.ws.send_status("fixing", "QA Agent found issues. Auto-fixing...")
                 fixed = await self._auto_fix("main.py", error_text)
                 if not fixed:
                     await self.ws.send_status("warning", "Auto-fix failed. Retrying QA test...")
@@ -1078,17 +1099,17 @@ USER REQUEST:
 
     async def _update_project(self, prompt: str) -> dict:
         """Handle a feature update request by generating a new update plan."""
-        if not self.planner:
+        if not self.master_planner:
             from core.planners.master_planner import MasterPlanner
-            self.planner = MasterPlanner(self.llm)
+            self.master_planner = MasterPlanner(self.llm)
             
         try:
             async def send_token(t):
-                await self.ws.send_stream("token", t)
+                await self.ws.send_llm_token(t)
             async def send_thinking(t):
-                await self.ws.send_stream("thinking", t)
+                await self.ws.send_llm_thinking(t)
                 
-            update_steps = await self.planner.generate_update_plan(
+            update_steps = await self.master_planner.generate_update_plan(
                 prompt=prompt,
                 state=self.state,
                 on_token=send_token,
@@ -1109,11 +1130,16 @@ USER REQUEST:
             
         # Reset plan_approved to False so the user can review the new steps
         self.state.plan_approved = False
-        self.state.status = "planning_completed"
+        self.state.status = "plan_review"
         self.state.save(self.workspace_dir / "project_state.json")
         
         # Send updated plan to frontend
-        await self.ws.send_plan(self.state.to_api_dict())
+        plan_data = [
+            {"step_number": s.step_number, "title": s.title, "file_path": s.file_path, "description": s.description, "status": s.status.value, "epic_id": getattr(s, "epic_id", None)}
+            for s in self.state.plan_steps
+        ]
+        await self.ws.send_plan_update(plan_data)
+        await self.ws.send_status("plan_review", "Update plan generated. Review and approve to begin execution.")
         
         return {"success": True}
 

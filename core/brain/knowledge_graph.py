@@ -118,8 +118,9 @@ class KnowledgeGraph:
         if not self._driver:
             return
         with self._driver.session(database=self.database) as session:
+            # Use directed hierarchical traversal to avoid OOM path explosion
             session.run(
-                "MATCH (p:Project {name: $name})-[*0..]-(n) DETACH DELETE n",
+                "MATCH (p:Project {name: $name})-[:OWNS|CONTAINS*0..]->(n) DETACH DELETE p, n",
                 name=project_name,
             )
             log.info("Cleared graph for project: %s", project_name)
@@ -352,10 +353,10 @@ class KnowledgeGraph:
         with self._driver.session(database=self.database) as session:
             # Get nodes
             if project_name:
-                n_query = "MATCH (p:Project {name: $name})-[:OWNS|CONTAINS*0..]->(n) RETURN DISTINCT id(n) as node_id, labels(n) as labels, properties(n) as props"
+                n_query = "MATCH (p:Project {name: $name})-[:OWNS|CONTAINS*0..]->(n) RETURN DISTINCT elementId(n) as node_id, labels(n) as labels, properties(n) as props"
                 n_result = session.run(n_query, name=project_name)
             else:
-                n_result = session.run("MATCH (n) RETURN id(n) as node_id, labels(n) as labels, properties(n) as props")
+                n_result = session.run("MATCH (n) RETURN elementId(n) as node_id, labels(n) as labels, properties(n) as props")
                 
             for record in n_result:
                 props = record["props"]
@@ -372,11 +373,11 @@ class KnowledgeGraph:
                 MATCH (p:Project {name: $name})-[:OWNS|CONTAINS*0..]->(a)
                 MATCH (p)-[:OWNS|CONTAINS*0..]->(b)
                 MATCH (a)-[r]->(b)
-                RETURN properties(a) as a_props, type(r) as type, properties(b) as b_props, id(a) as aid, id(b) as bid
+                RETURN properties(a) as a_props, type(r) as type, properties(b) as b_props, elementId(a) as aid, elementId(b) as bid
                 """
                 e_result = session.run(e_query, name=project_name)
             else:
-                e_result = session.run("MATCH (a)-[r]->(b) RETURN properties(a) as a_props, type(r) as type, properties(b) as b_props, id(a) as aid, id(b) as bid")
+                e_result = session.run("MATCH (a)-[r]->(b) RETURN properties(a) as a_props, type(r) as type, properties(b) as b_props, elementId(a) as aid, elementId(b) as bid")
                 
             for record in e_result:
                 a_props = record["a_props"]

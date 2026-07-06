@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import json
 import re
-from typing import Optional, Dict, Any, Tuple
+from typing import Tuple
 
 from core.llm_client import LLMClient
 from models.hierarchy import ArchitectureSpec

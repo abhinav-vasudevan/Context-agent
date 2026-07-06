@@ -13,7 +13,6 @@ import re
 from pathlib import Path
 from typing import Optional, Tuple
 
-import config
 from core.llm_client import LLMClient
 from core.context import ContextAssembler, FileRegistryBuilder
 from core.runner import Runner, ErrorParser
@@ -66,11 +65,6 @@ def _fuzzy_find_in_content(search_text: str, content: str, threshold: float = 0.
     if best_ratio >= threshold and best_start >= 0:
         # Reconstruct the matched text from the actual content lines
         matched_text = "\n".join(content_lines[best_start:best_start + search_len])
-        # Find the byte positions in the original content
-        start_pos = len("\n".join(content_lines[:best_start]))
-        if best_start > 0:
-            start_pos += 1  # account for the joining newline
-        end_pos = start_pos + len(matched_text)
         log.debug("Fuzzy match found (ratio=%.2f) at lines %d-%d", best_ratio, best_start, best_start + search_len)
         return (matched_text, best_ratio)
     
@@ -209,13 +203,18 @@ class Fixer:
                     if fpath.startswith("/"):
                         fpath = fpath.lstrip("/")
                     full_path = self.workspace / fpath
+                    
+                    if not self.runner.security.is_within_workspace(full_path, self.workspace):
+                        system_reply += f"--- SECURITY BLOCKED: Path traversal attempt to {fpath} ---\n"
+                        continue
+                        
                     if full_path.exists():
                         # Detect language for proper code fence
                         lang = 'python'
                         ext_map = {'.js': 'javascript', '.jsx': 'jsx', '.ts': 'typescript', '.tsx': 'tsx', '.css': 'css', '.html': 'html'}
-                        for ext, l in ext_map.items():
+                        for ext, lang_name in ext_map.items():
                             if fpath.endswith(ext):
-                                lang = l
+                                lang = lang_name
                                 break
                         system_reply += f"--- {fpath} ---\n```{lang}\n{full_path.read_text(encoding='utf-8')}\n```\n\n"
                     else:
@@ -330,6 +329,12 @@ class Fixer:
                     fpath = fpath.lstrip("/")
                 
                 full_fpath = self.workspace / fpath
+                
+                if not self.runner.security.is_within_workspace(full_fpath, self.workspace):
+                    current_prompt += f"SYSTEM:\nSECURITY BLOCKED: Path traversal attempt to {fpath}\n\n"
+                    edit_success = False
+                    break
+                    
                 if not full_fpath.exists():
                     current_prompt += f"SYSTEM:\nTarget file does not exist: {fpath}. Make sure the path is correct.\n\n"
                     edit_success = False
@@ -404,9 +409,9 @@ class Fixer:
                             # Detect the language hint for the file
                             lang = 'python'
                             ext_map = {'.js': 'javascript', '.jsx': 'jsx', '.ts': 'typescript', '.tsx': 'tsx', '.css': 'css', '.html': 'html'}
-                            for ext, l in ext_map.items():
+                            for ext, lang_name in ext_map.items():
                                 if fpath.endswith(ext):
-                                    lang = l
+                                    lang = lang_name
                                     break
                             # Escalate: demand full file rewrite
                             current_prompt += (

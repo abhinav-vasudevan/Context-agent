@@ -34,7 +34,7 @@ def replace_in_file(filepath):
 
 
 def main():
-    src_dir = 'src'
+    src_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src')
     for root, dirs, files in os.walk(src_dir):
         for file in files:
             if file.endswith(('.jsx', '.css', '.js')):
