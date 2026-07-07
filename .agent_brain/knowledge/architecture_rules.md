@@ -19,11 +19,14 @@ No matter what the user prompts you to build, you MUST ALWAYS default to a highl
   - `models/` (Data models, schemas, state management)
   - `utils/` (Helper scripts, generic utilities)
 - **Mandatory Folders/Files (when applicable):**
-  - `main.py` (Entry point, integration, and orchestration only)
-  - `config.py` or `core/config.py` (Configuration, constants, environment variables)
-  - `core/logger.py` (Standardized logging configuration)
-  - `core/errors.py` (Custom exception classes for the domain)
-- **Integration:** The `main.py` file must seamlessly import all these modules and wire them together.
+  - The project entry point (e.g., `main.py` or `server.py` for integration and orchestration only)
+  - `src/config.py` (Configuration, constants, environment variables)
+  - `src/utils.py` (Shared helper functions)
+  - `src/models.py` or `src/state.py` (Data classes, state management)
+  - `src/errors.py` (Custom exception classes for the domain)
+  - `src/logger.py` (Standardized logging configuration)
+- **Feature Modules:** Break features down into specific `src/<domain_name>.py` files.
+- **Integration:** The entry point file must seamlessly import all these modules and wire them together.
 
 ## 2. PLAN FORMAT (EXACT TEMPLATE)
 Every implementation plan you generate MUST follow this exact format without deviation. Do NOT use markdown code blocks to wrap the plan. Do NOT add conversational text before or after the plan.
@@ -43,7 +46,7 @@ Every implementation plan you generate MUST follow this exact format without dev
 ## Implementation Plan
 ---
 STEP 1:
-FILE: main.py
+FILE: [the entry point filename]
 DEPENDS: none
 DESCRIPTION: Create an empty `if __name__ == "__main__": pass` block.
 ---
@@ -66,6 +69,7 @@ When writing the actual Python code:
 - **Docstrings:** Every class and function MUST have a Google-style or Sphinx-style docstring explaining its purpose, arguments, and return values.
 - **Error Handling:** Wrap external IO, API calls, and fragile operations in `try/except` blocks. Catch specific exceptions, log them using the `logging` module, and raise custom exceptions from `src/errors.py`.
 - **No Placeholders:** NEVER use `# ... existing code ...` or `# TODO`. You must write out the entire, complete, running code.
+- **Entry Point Edits:** When modifying an existing project entry point to integrate new code, you MUST use the `<edit_file>` tool. NEVER use `<write_file>` on the entry point unless creating it for the first time, as it will wipe out existing integrations from previous epics.
 - **NO DUMMY DATA:** NEVER generate dummy code, "example.txt", or mock placeholders. All file paths must be dynamic relative paths. You must build a real, fully integrated system that binds real data flows together.
 - **Self-Contained:** Every file must include all necessary imports to run. Rely on the File Registry context to know what to import from internal modules.
 
@@ -73,7 +77,7 @@ When writing the actual Python code:
 When an error occurs and you are called to fix it:
 - **Use SEARCH/REPLACE Blocks:** NEVER rewrite the entire file to fix a small bug. You MUST output highly localized `<<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE` blocks.
 - **Trace the Error:** Read the traceback carefully. If the error is in a deeply nested function, check the calling function in the File Registry to see if the arguments match.
-- **Circular Imports:** If fixing a circular import, do NOT import `main.py` from any `src/` module. Refactor the import into the function body, use `typing.TYPE_CHECKING`, or extract the shared logic to a third file.
+- **Circular Imports:** If fixing a circular import, do NOT import the entry point from any `src/` module. Refactor the import into the function body, use `typing.TYPE_CHECKING`, or extract the shared logic to a third file.
 - **Never Repeat Mistakes:** Read the "PREVIOUS FIXES ATTEMPTED" history. Do NOT attempt a fix that has already failed. Look for alternative solutions.
 
 **By strictly following these rules, you will consistently produce professional, robust, and identically structured systems regardless of the prompt's complexity.**

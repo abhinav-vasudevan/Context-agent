@@ -296,7 +296,8 @@ class Orchestrator:
             asyncio.ensure_future(self.ws.send_llm_token(token))
             
         try:
-            epics = await self.master_planner.generate_epic_queue(planning_prompt, on_token=on_epic_token)
+            entry_point, epics = await self.master_planner.generate_epic_queue(planning_prompt, on_token=on_epic_token)
+            self.state.project_entry_point = entry_point
             self.state.epic_queue = epics
             if epics:
                 self.state.project_scale = epics[0].scale_estimate.value
@@ -447,6 +448,8 @@ class Orchestrator:
                         epic = await self.master_planner.generate_sprint_plan(
                             epic, 
                             self.state.get_file_registry_string(), 
+                            self.state.get_completed_summaries(),
+                            self.state.project_entry_point,
                             on_token=on_sprint_token
                         )
                         
@@ -605,10 +608,11 @@ class Orchestrator:
                                 npm_res.error or npm_res.stderr, "package.json"
                             )
 
-            # ── Phase 4: QA Agent tests main.py ──────────────────────
-            main_path = self.workspace_dir / "main.py"
+            # ── Phase 4: QA Agent tests the Project ──────────────────────
+            entry_file = self.state.project_entry_point or "main.py"
+            main_path = self.workspace_dir / entry_file
             if main_path.exists():
-                await self.ws.send_status("testing", "Phase 4: QA Agent testing main.py...")
+                await self.ws.send_status("testing", f"Phase 4: QA Agent testing {entry_file}...")
                 await self._run_qa_test_loop()
 
             # ── Done with all Epics ──────────────────────────────────────
@@ -814,7 +818,7 @@ class Orchestrator:
 
         qa = QAAgent(self.llm, self.state.original_prompt)
         python_cmd = self.runner._get_python_cmd()
-        main_file = str(self.workspace_dir / "main.py")
+        main_file = str(self.workspace_dir / (self.state.project_entry_point or "main.py"))
 
         for attempt in range(1, config.MAX_QA_ATTEMPTS + 1):
             await self.ws.send_status(
@@ -836,11 +840,12 @@ class Orchestrator:
 
             # Test failed — report and fix
             error_text = qa_result.bug_report or qa_result.error or qa_result.stderr
-            await self.ws.send_error(error_text, "main.py")
+            entry_file = self.state.project_entry_point or "main.py"
+            await self.ws.send_error(error_text, entry_file)
 
             if attempt < config.MAX_QA_ATTEMPTS:
                 await self.ws.send_status("fixing", "QA Agent found issues. Auto-fixing...")
-                fixed = await self._auto_fix("main.py", error_text)
+                fixed = await self._auto_fix(entry_file, error_text)
                 if not fixed:
                     await self.ws.send_status("warning", "Auto-fix failed. Retrying QA test...")
             else:
@@ -1180,8 +1185,9 @@ USER REQUEST:
             if found:
                 return found
         
-        log.warning("Manual fix: could not resolve target file, defaulting to main.py")
-        return "main.py"
+        entry = self.state.project_entry_point or "main.py"
+        log.warning(f"Manual fix: could not resolve target file, defaulting to {entry}")
+        return entry
 
     def _find_file_in_workspace(self, filename: str) -> Optional[str]:
         """Search the workspace for a file by name. Returns relative path or None."""

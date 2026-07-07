@@ -116,12 +116,13 @@ class Fixer:
             trace_file = _normalize_path(parsed_error["file"])
             workspace_str = _normalize_path(str(self.workspace.resolve()))
 
+            entry_point = self.state.project_entry_point or "main.py"
             if workspace_str in trace_file:
                 target_file = trace_file.split(workspace_str)[-1].lstrip("/")
             elif "src/" in trace_file:
                 target_file = "src/" + trace_file.split("src/")[-1]
-            elif trace_file.endswith("main.py"):
-                target_file = "main.py"
+            elif trace_file.endswith(entry_point):
+                target_file = entry_point
 
         full_target = self.workspace / target_file
 

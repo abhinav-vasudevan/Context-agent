@@ -161,8 +161,9 @@ async def main():
 
         # Execution / Verification
         if step.file_path.endswith(".py"):
-            main_path = workspace_dir / "main.py"
-            target_to_run = "main.py" if (step.file_path.startswith("src/") and main_path.exists()) else step.file_path
+            entry_point = state.project_entry_point or "main.py"
+            entry_path = workspace_dir / entry_point
+            target_to_run = entry_point if (step.file_path.startswith("src/") and entry_path.exists()) else step.file_path
 
             # CRITICAL: Security requirement - ALWAYS ask before execution
             if ui.ask_permission(f"Execute {target_to_run} to verify?", default=True):
@@ -207,16 +208,17 @@ async def main():
     ui.print_info(f"Total tokens used: {usage['total_tokens']} ({usage['total_prompt_tokens']} prompt, {usage['total_completion_tokens']} completion)")
     ui.print_info(f"Workspace path: {state.workspace_path}")
 
-    if (workspace_dir / "main.py").exists():
-        if ui.ask_permission("Run final project (main.py)?", default=True):
-            result = await runner.run_python_file("main.py", interactive=True)
+    entry_point = state.project_entry_point or "main.py"
+    if (workspace_dir / entry_point).exists():
+        if ui.ask_permission(f"Run final project ({entry_point})?", default=True):
+            result = await runner.run_python_file(entry_point, interactive=True)
             if result.success:
                 ui.print_success("Project runs successfully!")
                 print("\n=== OUTPUT ===")
                 print(result.stdout)
                 print("==============")
             else:
-                ui.show_error("main.py", result.error or result.stderr)
+                ui.show_error(entry_point, result.error or result.stderr)
 
 
 async def _fix_loop(ui: TerminalUI, fixer: Fixer, file_path: str, error_text: str) -> bool:

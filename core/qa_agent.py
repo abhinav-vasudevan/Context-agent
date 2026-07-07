@@ -75,10 +75,17 @@ class QAAgent:
             on_status("QA Agent: Starting application test...")
 
         try:
+            if main_file.endswith(".js"):
+                cmd = ["node", main_file]
+            elif main_file.endswith("package.json"):
+                cmd = ["npm", "start"]
+            elif main_file.endswith(".sh"):
+                cmd = ["bash", main_file]
+            else:
+                cmd = [python_cmd, "-u", main_file]
+                
             process = await asyncio.create_subprocess_exec(
-                python_cmd,
-                "-u",  # Unbuffered output
-                main_file,
+                *cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -89,7 +96,7 @@ class QAAgent:
             return QAResult(
                 success=False,
                 interactions=[],
-                error=f"Python not found at '{python_cmd}'",
+                error=f"Command not found to execute '{main_file}'",
             )
         except Exception as e:
             return QAResult(

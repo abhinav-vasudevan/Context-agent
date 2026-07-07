@@ -5,8 +5,7 @@ Takes the user's prompt → calls LLM → produces a structured plan
 with numbered steps, file paths, dependencies, and descriptions.
 
 Key rules enforced:
-  - Step 1 is ALWAYS main.py (skeleton entry point)
-  - Source files go in src/
+  - Source files go in domain-driven folders
   - Last step is README.md
   - Each step produces exactly one file
 """
@@ -199,8 +198,9 @@ class Planner:
             
             if not file_path:
                 # Try to infer from title
-                if 'main.py' in block.lower():
-                    file_path = 'main.py'
+                entry_point = self.state.project_entry_point or 'main.py'
+                if entry_point in block:
+                    file_path = entry_point
                 elif 'readme' in block.lower():
                     file_path = 'README.md'
                 else:
@@ -280,10 +280,9 @@ class Planner:
     def _validate_plan(self, steps: List[PlanStep]) -> List[PlanStep]:
         """
         Validate and fix the plan to ensure our mandatory rules are met:
-        1. Step 1 must be main.py
-        2. Source files go in src/
-        3. Last step should be README.md
-        4. Each step has a valid file path
+        1. Source files go in domain-driven folders
+        2. Last step should be README.md
+        3. Each step has a valid file path
         """
         if not steps:
             return steps
@@ -292,14 +291,13 @@ class Planner:
         for i, step in enumerate(steps):
             step.step_number = i + 1
 
-        # We no longer force a main.py step. The LLM Planner should dynamically find or create the entry point.
-
-        # Ensure source files have src/ prefix (except main.py and README.md)
+        # Ensure source files have appropriate prefixes if they are just plain names
+        entry_point = self.state.project_entry_point or "main.py"
         for step in steps:
             fp = step.file_path
-            if fp in ("main.py", "README.md", "requirements.txt"):
+            if fp in (entry_point, "main.py", "README.md", "requirements.txt", "package.json"):
                 continue
-            if not fp.startswith("src/") and fp.endswith(".py"):
+            if not fp.startswith("src/") and fp.count('/') == 0 and fp.endswith(".py"):
                 step.file_path = f"src/{fp}"
                 log.info("Fixed file path: %s -> %s", fp, step.file_path)
 
@@ -313,6 +311,19 @@ class Planner:
             else:
                 log.warning("Removing duplicate step for file: %s", step.file_path)
         steps = deduped
+
+        # Ensure the project entry point is included for integration (unfailable stitching)
+        entry_step = next((s for s in steps if s.file_path == entry_point), None)
+        if not entry_step:
+            integration_step = PlanStep(
+                step_number=0, # Will be re-numbered
+                title="Integrate new code into entry point",
+                file_path=entry_point,
+                description=f"Modify the {entry_point} entry point to import and wire together all the newly generated modules.",
+                depends_on=[s.step_number for s in steps if s.file_path != entry_point]
+            )
+            steps.append(integration_step)
+            log.info("Auto-injected mandatory integration step for %s", entry_point)
 
         # Ensure requirements.txt exists
         req_step = next((s for s in steps if s.file_path == "requirements.txt"), None)
@@ -344,8 +355,8 @@ class Planner:
                 "Create a comprehensive README.md documenting the project. "
                 "CRITICAL: You MUST include explicit instructions on how to activate the "
                 "virtual environment (`source venv/bin/activate` on Linux/Mac, or `venv\\\\Scripts\\\\activate` on Windows) "
-                "BEFORE running `python main.py`. "
-                "If the system encountered any errors running main.py that require user "
+                f"BEFORE running the project via `{self.state.project_entry_point or 'main.py'}`. "
+                f"If the system encountered any errors running the entry point that require user "
                 "intervention (like missing system dependencies or API keys), "
                 "you MUST document them clearly under a 'Manual Setup Required' section."
             ),

@@ -41,6 +41,7 @@ class FileEntry:
     class_methods: Dict[str, List[str]] = field(default_factory=dict)  # class -> method names
     function_signatures: Dict[str, str] = field(default_factory=dict)  # func_name -> "func(a, b) -> int"
     constants: List[str] = field(default_factory=list)   # module-level constants (ALL_CAPS names)
+    calls: List[str] = field(default_factory=list)       # outgoing function/method calls made from this file
 
     def to_registry_string(self) -> str:
         """
@@ -58,6 +59,10 @@ class FileEntry:
                     lines.append(f"    class {cls_name}")
 
         if self.functions:
+            lines.append(f"    functions: {', '.join(self.functions)}")
+            
+        if self.calls:
+            lines.append(f"    outgoing_calls: {', '.join(self.calls)}")
             for fn in self.functions:
                 sig = self.function_signatures.get(fn, fn + "()")
                 lines.append(f"    def {sig}")
@@ -118,6 +123,7 @@ class ProjectState:
     original_prompt: str = ""
     architecture_text: str = ""                # raw architecture.md content
     project_scale: str = "medium"              # simple, medium, large, massive
+    project_entry_point: str = ""              # MAIN STARTING POINT of the project (e.g. cli.py)
 
     # Epics (Phase 1 JIT Planning)
     epic_queue: List[EpicSpec] = field(default_factory=list)
@@ -241,6 +247,7 @@ class ProjectState:
             "project_scale": self.project_scale,
             "epic_queue": [e.to_dict() for e in self.epic_queue],
             "current_epic_id": self.current_epic_id,
+            "project_entry_point": self.project_entry_point,
             "ingested_architecture_notes": self.ingested_architecture_notes,
         }
 
@@ -302,6 +309,7 @@ class ProjectState:
             "project_id": self.project_id,
             "project_name": self.project_name,
             "project_scale": self.project_scale,
+            "project_entry_point": self.project_entry_point,
             "epic_queue": [e.to_dict() for e in self.epic_queue],
             "current_epic_id": self.current_epic_id,
             "original_prompt": self.original_prompt,
@@ -357,6 +365,7 @@ class ProjectState:
         state.project_id = data.get("project_id", state.project_id)
         state.project_name = data.get("project_name", "")
         state.project_scale = data.get("project_scale", "medium")
+        state.project_entry_point = data.get("project_entry_point", "")
         state.current_epic_id = data.get("current_epic_id")
         
         # Rebuild Epics

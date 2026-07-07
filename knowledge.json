@@ -7,6 +7,6 @@
     "example_usage_generate": "import requests\n\nresponse = requests.post('http://127.0.0.1:11434/api/generate', json={\n    'model': 'qwen3.6:27b',\n    'prompt': 'Why is the sky blue?',\n    'stream': False\n})\nprint(response.json()['response'])",
     "example_usage_chat": "import requests\n\nresponse = requests.post('http://127.0.0.1:11434/api/chat', json={\n    'model': 'qwen3.6:27b',\n    'messages': [{'role': 'user', 'content': 'Hello'}],\n    'stream': False\n})\nprint(response.json()['message']['content'])",
     "streaming": "To stream, set 'stream': True and iterate over response.iter_lines(). Use json.loads(line) on each line to extract the 'response' or 'message' token.",
-    "model_pulling": "IMPORTANT: You MUST STRICTLY use the model name 'qwen3.6:27b' and NOTHING ELSE. No placeholders. You must include code in main.py to pull the model BEFORE running inference using `subprocess.run(['ollama', 'pull', 'qwen3.6:27b'])`."
+    "model_pulling": "IMPORTANT: You MUST STRICTLY use the model name 'qwen3.6:27b' and NOTHING ELSE. No placeholders. You must include code in the project's entry point to pull the model BEFORE running inference using `subprocess.run(['ollama', 'pull', 'qwen3.6:27b'])`."
   }
 }

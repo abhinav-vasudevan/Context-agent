@@ -116,6 +116,20 @@ class FileRegistryBuilder:
                     if isinstance(target, ast.Name) and target.id.isupper():
                         entry.constants.append(target.id)
 
+        class CallVisitor(ast.NodeVisitor):
+            def __init__(self):
+                self.calls = set()
+            def visit_Call(self, node):
+                if isinstance(node.func, ast.Name):
+                    self.calls.add(node.func.id)
+                elif isinstance(node.func, ast.Attribute):
+                    self.calls.add(node.func.attr)
+                self.generic_visit(node)
+                
+        visitor = CallVisitor()
+        visitor.visit(tree)
+        entry.calls = sorted(list(visitor.calls))
+
         return entry
 
     @staticmethod
@@ -269,7 +283,7 @@ PYTHON & SECURITY STANDARDS (Zero Tolerance):
 3. QUALITY: Do NOT leave empty `f-strings` or unused imports/variables (passes Ruff checks).
 4. STRING FORMATTING: When using Python's `.format()` on a string containing JSON or braces, you MUST double brace the JSON (`{{` and `}}`) to prevent `KeyError`.
 5. SEMGREP: For safe dynamic URLs in `urllib`, append `# nosemgrep` comments to bypass false positives.
-6. SANDBOX PATHS: You are operating in a sandboxed directory. NEVER use absolute paths like `/workspace/...`. ALWAYS use relative paths (e.g., `./src/main.py`) when reading or writing files.
+6. SANDBOX PATHS: You are operating in a sandboxed directory. NEVER use absolute paths like `/workspace/...`. ALWAYS use relative paths (e.g., `./src/app.py`) when reading or writing files.
 
 Output your valid XML tools now."""
 
@@ -301,7 +315,7 @@ DO NOT write actual code files. Just write the highly detailed design document.
 Your job is to take a detailed Architectural Blueprint and translate it into a strict, step-by-step implementation plan.
 
 MANDATORY RULES:
-1. ENTRY POINT RULE (CRITICAL): At no cost should the project not have a starting point. Analyze the Architectural Blueprint to find the existing codebase entry point. If one exists (e.g., main.py, index.js), plan to `<edit_file>` it to integrate new features. If it does NOT exist, create a new entry point and use it.
+1. ENTRY POINT RULE (CRITICAL): At no cost should the project not have a starting point. Analyze the Architectural Blueprint to find the existing codebase entry point. If one exists (e.g., cli.py, index.js), plan to `<edit_file>` it to integrate new features. If it does NOT exist, create a new entry point and use it.
 2. All other source files MUST be placed in feature-based subdirectories (e.g., `core/`, `backend/`, `frontend/`, `src/`, `components/`, `models/`). Do NOT put everything in a flat directory. Use a deep, modular structure.
 3. INTEGRATION: You MUST schedule an explicit integration step (usually the last step before README.md) to wire up your newly created modules into the identified entry point.
 4. The LAST step MUST be creating `README.md`.
@@ -316,7 +330,7 @@ MANDATORY RULES:
    - ALWAYS explain exactly how to use it (the commands, the inputs).
    - ALWAYS explain any terminology used in the system interface (e.g., if there's a chat prompt, explain what "User:", "Bot:", "Agent:" means and what the user is expected to type).
 9. MANDATORY: Be explicitly precise about function signatures and required positional arguments in the Architecture and Descriptions so the coder knows exactly how to wire components together!
-10. MANDATORY: Explicitly instruct the coder to NEVER use hardcoded placeholder values or dummy data in the final integration (e.g. main.py). The system MUST be wired up dynamically using actual user inputs or API responses.
+10. MANDATORY: Explicitly instruct the coder to NEVER use hardcoded placeholder values or dummy data in the final integration (e.g. the entry point). The system MUST be wired up dynamically using actual user inputs or API responses.
 11. MANDATORY: ALWAYS include a step to generate a `requirements.txt` file listing all third-party dependencies.
 12. CRITICAL: DO NOT output conversational preamble like 'Here is your plan'. You MUST start your response directly with `# [Project Title]`.
 
@@ -431,7 +445,7 @@ Format inside the tag: `<run_command>pytest test_api.py</run_command>`. The syst
 Use this when you believe the bug is fixed and you want the system to test the code.
 
 CRITICAL RULES:
-1. NEVER guess! If you see an error in `main.py` calling `src/utils.py`, use `<view_file>src/utils.py</view_file>` to see the actual function signature before trying to fix it.
+1. NEVER guess! If you see an error in `app.py` calling `src/utils.py`, use `<view_file>src/utils.py</view_file>` to see the actual function signature before trying to fix it.
 2. If `<edit_file>` fails due to a bad SEARCH block, try again or use the fallback: `<edit_file path="..." fallback="true"> [Full file contents] </edit_file>`.
 3. Only use `<done>` when you have actually made edits using `<edit_file>`.
 4. SCOPING: NEVER run a global `pytest` or `pytest .` command. ALWAYS test the specific file you are fixing (e.g., `<run_command>pytest path/to/specific_test.py</run_command>`). Do NOT try to fix unrelated background files outside your immediate task scope.
@@ -444,13 +458,13 @@ PYTHON & SECURITY STANDARDS (Zero Tolerance):
 3. QUALITY: Do NOT leave empty `f-strings` or unused imports/variables (passes Ruff checks).
 4. STRING FORMATTING: When using Python's `.format()` on a string containing JSON or braces, you MUST double brace the JSON (`{{` and `}}`) to prevent `KeyError`.
 5. SEMGREP: For safe dynamic URLs in `urllib`, append `# nosemgrep` comments to bypass false positives.
-6. SANDBOX PATHS: You are operating in a sandboxed directory. NEVER use absolute paths like `/workspace/...`. ALWAYS use relative paths (e.g., `./src/main.py`) when reading or writing files.
+6. SANDBOX PATHS: You are operating in a sandboxed directory. NEVER use absolute paths like `/workspace/...`. ALWAYS use relative paths (e.g., `./src/app.py`) when reading or writing files.
 
 EXAMPLE WORKFLOW:
-<view_file>src/main.py</view_file>
+<view_file>src/app.py</view_file>
 <view_file>src/config.py</view_file>
 ... (System returns file contents) ...
-<edit_file path="src/main.py">
+<edit_file path="src/app.py">
 <<<<<<< SEARCH
 from src.config import get_cfg
 =======
@@ -674,9 +688,9 @@ Output ONLY the one-sentence summary, nothing else."""
 
 CRITICAL REMINDERS:
 1. Start your response with `# [Project Title]` — NO preamble, NO thinking blocks, NO conversational text.
-2. Step 1 MUST be main.py — completely empty except for `if __name__ == "__main__":` with `pass`. No imports.
+2. Step 1 MUST be the project entry point (e.g. `main.py` or `server.py`) — completely empty except for `if __name__ == "__main__":` with `pass` (or equivalent). No imports.
 3. All source files go in `src/`. Flat structure only (e.g., `src/math.py`, NOT `src/utils/math.py`).
-4. Only ONE step for `main.py`. The system auto-updates it later.
+4. Only ONE step for the entry point. The system auto-updates it later.
 5. Last step MUST be README.md.
 6. Follow the EXACT format: `---` then `STEP N:` then `FILE:` then `DEPENDS:` then `DESCRIPTION:` each on separate lines.
 
@@ -716,24 +730,24 @@ Output the `## Implementation Plan` with STEP/FILE/DEPENDS/DESCRIPTION blocks se
         new_file_entry: FileEntry,
     ) -> dict:
         """
-        Build the prompt for updating main.py to import a new module.
+        Build the prompt for updating the entry point to import a new module.
         This is called after each src/ file is generated.
         """
-        system = """You are updating a Python main.py file to import and use a newly created module.
+        system = """You are updating a project's entry point file to import and use a newly created module.
 
 RULES:
-1. Output the COMPLETE updated main.py file.
+1. Output the COMPLETE updated entry point file.
 2. IF the new module provides classes or functions, add an import statement for it (e.g. `from src.<module> import <Class/function>`).
-3. IF it provides classes or functions, actually INTEGRATE it in the `if __name__ == "__main__"` block by wiring it up to the existing system.
-4. IF the new module does NOT provide any classes or functions (e.g. it is just an empty script or entry point), DO NOT add any imports and DO NOT modify `main.py` except returning it exactly as it was.
+3. IF it provides classes or functions, actually INTEGRATE it in the execution block by wiring it up to the existing system.
+4. IF the new module does NOT provide any classes or functions (e.g. it is just an empty script or entry point), DO NOT add any imports and DO NOT modify the entry point except returning it exactly as it was.
 5. Keep ALL existing imports and code — only ADD the new integration.
-6. NO markdown, NO explanations. Output only raw Python code.
+6. NO markdown, NO explanations. Output only raw code.
 7. MANDATORY: Meticulously check the function signatures and class definitions of the new module. Ensure ALL required positional arguments are provided when you instantiate classes or call functions!
 8. NEVER pass undefined variables as arguments. Always initialize necessary dependencies first.
 9. CRITICAL RULE: NEVER use dummy data, placeholders, or hardcoded fake paths like `example.txt` or `Hello World`. You MUST use real relative paths inside the workspace, or dynamically generate data, or bind it properly to the actual application logic.
 """
 
-        prompt = f"""Current main.py content:
+        prompt = f"""Current entry point content:
 {current_main_content}
 
 New module to integrate:
@@ -742,7 +756,7 @@ New module to integrate:
 FILE REGISTRY (all existing files):
 {self.state.get_file_registry_string()}
 
-Output the COMPLETE updated main.py with the new import and usage added."""
+Output the COMPLETE updated entry point with the new import and usage added."""
 
         return {
             "system": system,

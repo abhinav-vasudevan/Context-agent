@@ -50,29 +50,39 @@ class MasterPlanner:
 
     # ── System Prompts ────────────────────────────────────────────────
 
-    VISION_SYSTEM_PROMPT = """You are a Principal Software Architect.
+    GLOBAL_ARCHITECTURE_RULES = """
+GLOBAL ARCHITECTURE RULES (CRITICAL, HIGHEST PRIORITY):
+1. FULL STACK DEVELOPER: You are a full stack developer. If a request implies a web app or UI, you MUST generate both frontend and backend Subsystems/Epics. Do not ignore the frontend.
+2. SINGLE STARTING POINT: ALWAYS define exactly ONE starting point for an environment (e.g. cli.py, backend/server.py). If it is a full-stack app, ONE for backend and ONE for frontend. Never create one per Epic.
+3. CONNECT OLD TO NEW: Always modify existing entry points to integrate new code. Do not leave code orphaned. Every step must be stitched together.
+"""
+
+    VISION_SYSTEM_PROMPT = f"""You are a Principal Software Architect.
 Your job is to analyze a user's request and decompose it into a system architecture.
+
+{{GLOBAL_ARCHITECTURE_RULES}}
 
 CRITICAL INSTRUCTION: DO NOT USE `<think>` TAGS. OUTPUT ONLY THE JSON IMMEDIATELY. NO REASONING, NO MARKDOWN, NO CODE FENCES.
 
 You must output a STRICT JSON object with this exact schema:
 
-{
+{{
   "name": "Project Name",
   "vision": "A 1-2 sentence vision statement.",
   "scale": "small | medium | large",
+  "project_entry_point": "path/to/main_starting_point.py",
   "subsystems": [
-    {
+    {{
       "name": "Subsystem Name",
       "purpose": "One sentence explaining why this subsystem exists.",
       "responsibilities": ["responsibility 1"],
       "boundaries": ["boundary 1"],
       "dependencies": []
-    }
+    }}
   ],
   "adrs": [],
   "constraints": []
-}
+}}
 
 SCALING RULES (CRITICAL):
 - SIMPLE request (calculator, script, CLI tool): Output EXACTLY 1 subsystem. NO ADRs. Keep it extremely brief.
@@ -109,30 +119,34 @@ You must output a STRICT JSON object with this schema:
 }
 
 MANDATORY RULES:
-1. File paths MUST use a domain-driven folder structure (e.g. backend/api.py, frontend/app.js, core/memory.py) rather than a single src/ folder.
-2. If generating a project from scratch, output main.py at the root as the LAST code file step. If modifying an existing codebase, do NOT schedule main.py unless it is explicitly required by the user's prompt. Do not assume main.py is the only entry point.
-3. The very last file overall is ALWAYS README.md.
-4. Include a requirements.txt or package.json as needed.
-5. Keep descriptions EXTREMELY short (1 sentence max) to save tokens.
-6. NO HALLUCINATIONS: Do NOT add AI/LLM integrations (e.g. ollama, openai, httpx) unless the user's prompt explicitly requests them. Assume the existing codebase provides necessary tools unless told otherwise."""
+1. File paths MUST use a domain-driven folder structure (e.g. backend/api.py, frontend/app.js, core/memory.py).
+2. ENTRY POINT MANDATE: A project must ALWAYS have a clear starting point. Use the `project_entry_point` if it exists. If generating a project from scratch, output main.py at the root to wire up your services.
+3. INTEGRATION MANDATE: If modifying an existing codebase, you MUST identify existing entry points from the context and output a module modification for them to import and integrate your new services. Do NOT leave new code files disconnected from the rest of the project.
+4. The very last file overall is ALWAYS README.md.
+5. Include a requirements.txt or package.json as needed.
+6. Keep descriptions EXTREMELY short (1 sentence max) to save tokens.
+7. NO HALLUCINATIONS: Do NOT add AI/LLM integrations (e.g. ollama, openai, httpx) unless the user's prompt explicitly requests them."""
 
-    COMPLEXITY_SYSTEM_PROMPT = """You are a Principal Software Architect determining the scale of a project.
+    COMPLEXITY_SYSTEM_PROMPT = f"""You are a Principal Software Architect determining the scale of a project.
 Analyze the user's request and classify its complexity.
+
+{{GLOBAL_ARCHITECTURE_RULES}}
 
 CRITICAL INSTRUCTION: OUTPUT ONLY THE JSON IMMEDIATELY.
 
 Format:
-{
+{{
   "scale_estimate": "simple | medium | large | massive",
+  "project_entry_point": "path/to/main_starting_point.py",
   "epics": [
-    {
+    {{
       "name": "Epic Name",
       "purpose": "One sentence purpose",
       "public_api_contract": ["API or Interface 1", "API 2"],
       "depends_on_epics": ["Epic Name 1"]
-    }
+    }}
   ]
-}
+}}
 
 SCALING RULES:
 - simple (1-5 files): Single script, calculator. Output EXACTLY 1 Epic.
@@ -210,6 +224,9 @@ SCALING RULES:
             description=data.get("vision", ""),
             constraints=data.get("constraints", []),
         )
+        
+        # We don't store project_entry_point in ArchitectureSpec directly, it goes to ProjectState
+        # But we can extract it for caller use if needed, for now we just parse subsystems.
 
         # Parse subsystems
         for sub_data in data.get("subsystems", []):
@@ -256,7 +273,7 @@ SCALING RULES:
         user_prompt: str,
         on_token: Optional[Callable] = None,
         on_thinking: Optional[Callable] = None,
-    ) -> List[EpicSpec]:
+    ) -> tuple[str, List[EpicSpec]]:
         """
         Phase 1 (JIT Planning): Determine the project scale and break it into Epics.
         """
@@ -285,9 +302,11 @@ SCALING RULES:
             cleaned = cleaned[start:end + 1]
 
         epics = []
+        entry_point = ""
         try:
             data = json.loads(cleaned)
             scale = ProjectScale(data.get("scale_estimate", "medium").lower())
+            entry_point = data.get("project_entry_point", "")
             for epic_data in data.get("epics", []):
                 epics.append(EpicSpec(
                     name=epic_data.get("name", "Unknown Epic"),
@@ -301,18 +320,20 @@ SCALING RULES:
             # Fallback to a single Epic
             epics.append(EpicSpec(name="Core System", purpose="Main implementation", scale_estimate=ProjectScale.MEDIUM))
 
-        return epics
+        return entry_point, epics
 
     async def generate_sprint_plan(
         self,
         epic: EpicSpec,
         ast_context: str,
+        completed_epics_summary: str,
+        project_entry_point: str,
         on_token: Optional[Callable] = None,
         on_thinking: Optional[Callable] = None,
     ) -> EpicSpec:
         """
         Phase 1 (JIT Planning): Break a single Epic into detailed Services and Modules.
-        Uses the AST context of previously completed Epics.
+        Uses the AST context of previously completed Epics and their summaries.
         """
         log.info("MasterPlanner: generating Sprint plan for Epic %s", epic.name)
         
@@ -323,10 +344,16 @@ Name: {epic.name}
 Purpose: {epic.purpose}
 Expected API Contract: {', '.join(epic.public_api_contract)}
 
+PROJECT ENTRY POINT:
+{project_entry_point or "None defined yet"}
+
+WHAT WAS COMPLETED IN PREVIOUS EPICS:
+{completed_epics_summary or "This is the first Epic."}
+
 EXISTING SYSTEM CONTEXT (Do not rebuild these, just use them):
 {ast_context}
 
-Generate the detailed services and modules for this Epic only."""
+Generate the detailed services and modules for this Epic only. Be sure to output modification modules for the PROJECT ENTRY POINT and any existing entry points in the context that need to be updated to integrate these new services with what was completed in previous epics."""
 
         # Re-use the SERVICES_SYSTEM_PROMPT but wrapped for a single subsystem
         chunks = []
@@ -502,19 +529,6 @@ Break each subsystem into concrete services and file modules now."""
         steps = []
         step_number = 1
 
-        # Step 1: main.py (always first)
-        steps.append(PlanStep(
-            step_number=step_number,
-            title="Create main.py entry point",
-            file_path="main.py",
-            description=(
-                "Create a completely empty main.py file. Only include "
-                "`if __name__ == '__main__':` followed by `pass`. "
-                "Do NOT add any imports — the system will wire this up automatically."
-            ),
-        ))
-        step_number += 1
-
         # Iterate through the hierarchy to build ordered steps
         for subsystem in arch.subsystems:
             for service in subsystem.services:
@@ -530,7 +544,7 @@ Break each subsystem into concrete services and file modules now."""
                         description += f"\nExpected Exports: {', '.join(module.exports)}"
 
                     # Calculate dependencies (step numbers of modules we depend on)
-                    depends_on = [1]  # All files depend on main.py
+                    depends_on = []
                     for dep_path in module.dependencies:
                         dep_step = next(
                             (s for s in steps if s.file_path == dep_path),
