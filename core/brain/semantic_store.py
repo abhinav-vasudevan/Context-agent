@@ -47,6 +47,7 @@ class SemanticStore:
     ARCH_COLLECTION = "architecture_specs"
     ADR_COLLECTION = "adrs"
     CHANGES_COLLECTION = "change_history"
+    DOCUMENTS_COLLECTION = "user_documents"
 
     def __init__(self, persist_dir: str):
         """
@@ -334,6 +335,64 @@ class SemanticStore:
                 adrs.append(entry)
 
         return adrs
+
+    # ── User Documents ────────────────────────────────────────────────
+
+    def store_document_chunk(self, doc_id: str, chunk_index: int, chunk_content: str, source_file: str):
+        """Store a chunk of a large user document."""
+        collection = self._get_or_create_collection(self.DOCUMENTS_COLLECTION)
+        if not collection:
+            return
+
+        chunk_id = f"{doc_id}_chunk_{chunk_index}"
+        metadata = {
+            "doc_id": doc_id,
+            "chunk_index": chunk_index,
+            "source_file": source_file,
+        }
+
+        collection.upsert(
+            ids=[chunk_id],
+            documents=[chunk_content],
+            metadatas=[metadata],
+        )
+
+    def query_document_chunks(self, query_text: str, n_results: int = 3, doc_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Find relevant chunks from user documents."""
+        collection = self._get_or_create_collection(self.DOCUMENTS_COLLECTION)
+        if not collection:
+            return []
+
+        where_filter = None
+        if doc_ids:
+            if len(doc_ids) == 1:
+                where_filter = {"doc_id": doc_ids[0]}
+            else:
+                where_filter = {"doc_id": {"$in": doc_ids}}
+
+        try:
+            results = collection.query(
+                query_texts=[query_text],
+                n_results=n_results,
+                where=where_filter,
+            )
+        except Exception as e:
+            log.warning("Document query failed: %s", e)
+            return []
+
+        chunks = []
+        if results and results["ids"] and results["ids"][0]:
+            for i, chunk_id in enumerate(results["ids"][0]):
+                entry = {
+                    "id": chunk_id,
+                    "document": results["documents"][0][i] if results["documents"] else "",
+                    "distance": results["distances"][0][i] if results["distances"] else 1.0,
+                }
+                if results["metadatas"] and results["metadatas"][0]:
+                    entry.update(results["metadatas"][0][i])
+                chunks.append(entry)
+
+        return chunks
 
     # ── Utilities ─────────────────────────────────────────────────────
 

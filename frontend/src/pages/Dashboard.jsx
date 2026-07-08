@@ -9,6 +9,7 @@ export default function Dashboard({ onProjectOpen }) {
   const [projectName, setProjectName] = useState('');
   const [projectPrompt, setProjectPrompt] = useState('');
   const [codebasePath, setCodebasePath] = useState('');
+  const [file, setFile] = useState(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const [backendOnline, setBackendOnline] = useState(null);
@@ -63,7 +64,7 @@ export default function Dashboard({ onProjectOpen }) {
     setCreating(true);
     setError('');
     try {
-      const data = await api.createProject(projectName.trim(), projectPrompt.trim());
+      const data = await api.createProject(projectName.trim(), projectPrompt.trim(), mode, file);
       onProjectOpen(data.project);
     } catch (err) {
       setError(err.message);
@@ -158,32 +159,42 @@ export default function Dashboard({ onProjectOpen }) {
         {/* Create / Ingest Project Section */}
         <section className="flex flex-col gap-4">
           {mode === 'none' ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <button 
-                className="group flex flex-col items-center justify-center p-12 bg-nude-850/50 hover:bg-nude-800 border border-nude-700 border-dashed rounded-2xl transition-all hover:border-nude-500"
+                className="group flex flex-col items-center justify-center p-8 bg-nude-850/50 hover:bg-nude-800 border border-nude-700 border-dashed rounded-2xl transition-all hover:border-nude-500"
                 onClick={() => setMode('create')}
               >
                 <div className="bg-nude-800 group-hover:bg-nude-700 p-4 rounded-full mb-4 transition-colors">
                   <Plus size={32} className="text-nude-400 group-hover:text-nude-200" />
                 </div>
-                <span className="text-lg font-medium text-nude-200 mb-1">New Workspace</span>
-                <span className="text-sm text-nude-500">Initialize a clean environment for your next project</span>
+                <span className="text-lg font-medium text-nude-200 mb-1">Build from Scratch</span>
+                <span className="text-sm text-nude-500 text-center px-4">Start fresh from a prompt or uploaded document</span>
               </button>
               <button 
-                className="group flex flex-col items-center justify-center p-12 bg-nude-850/50 hover:bg-nude-800 border border-nude-700 border-dashed rounded-2xl transition-all hover:border-nude-500"
+                className="group flex flex-col items-center justify-center p-8 bg-nude-850/50 hover:bg-nude-800 border border-nude-700 border-dashed rounded-2xl transition-all hover:border-nude-500"
                 onClick={() => setMode('ingest')}
               >
                 <div className="bg-nude-800 group-hover:bg-nude-700 p-4 rounded-full mb-4 transition-colors">
                   <FolderOpen size={32} className="text-nude-400 group-hover:text-nude-200" />
                 </div>
                 <span className="text-lg font-medium text-nude-200 mb-1">Ingest Codebase</span>
-                <span className="text-sm text-nude-500">Import an existing local codebase into the AI Brain</span>
+                <span className="text-sm text-nude-500 text-center px-4">Import and modify an existing local codebase</span>
+              </button>
+              <button 
+                className="group flex flex-col items-center justify-center p-8 bg-nude-850/50 hover:bg-nude-800 border border-nude-700 border-dashed rounded-2xl transition-all hover:border-nude-500"
+                onClick={() => setMode('docs')}
+              >
+                <div className="bg-nude-800 group-hover:bg-nude-700 p-4 rounded-full mb-4 transition-colors">
+                  <Box size={32} className="text-nude-400 group-hover:text-nude-200" />
+                </div>
+                <span className="text-lg font-medium text-nude-200 mb-1">Docs Operations</span>
+                <span className="text-sm text-nude-500 text-center px-4">Chat with and analyze documents only</span>
               </button>
             </div>
-          ) : mode === 'create' ? (
+          ) : mode === 'create' || mode === 'docs' ? (
             <form className="bg-nude-850 border border-nude-700 rounded-2xl p-6 md:p-8 shadow-soft" onSubmit={handleCreate}>
               <h2 className="text-xl font-medium text-nude-100 mb-6 flex items-center gap-2">
-                <Box size={20} className="text-nude-500" /> Initialize Workspace
+                <Box size={20} className="text-nude-500" /> {mode === 'create' ? 'Initialize Workspace' : 'Docs Workspace'}
               </h2>
               
               <div className="space-y-6">
@@ -208,11 +219,26 @@ export default function Dashboard({ onProjectOpen }) {
                   <textarea
                     id="project-prompt"
                     className="w-full bg-nude-900 border border-nude-700 rounded-xl px-4 py-3 text-nude-200 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-all placeholder:text-nude-600 resize-y min-h-[120px]"
-                    placeholder="Provide architecture guidelines, target goals, or specific tech stack details..."
+                    placeholder={mode === 'create' ? "Provide architecture guidelines, target goals, or specific tech stack details..." : "Provide instructions for how you want to analyze or chat with the documents..."}
                     value={projectPrompt}
                     onChange={(e) => setProjectPrompt(e.target.value)}
                   />
                 </div>
+                
+                {mode === 'create' && (
+                  <div>
+                    <label htmlFor="project-file" className="block text-sm font-medium text-nude-400 mb-2">
+                      Upload Document <span className="text-nude-600 font-normal">(Optional, e.g. plan.txt)</span>
+                    </label>
+                    <input
+                      id="project-file"
+                      type="file"
+                      className="w-full bg-nude-900 border border-nude-700 rounded-xl px-4 py-3 text-nude-200 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-all"
+                      onChange={(e) => setFile(e.target.files[0])}
+                    />
+                    <p className="text-xs text-nude-500 mt-2">If provided, the system will immediately build the code based on this document.</p>
+                  </div>
+                )}
 
                 <div className="flex items-center justify-end gap-3 pt-4 border-t border-nude-700/50">
                   <button type="button" className="px-6 py-2.5 rounded-xl text-nude-400 hover:text-nude-200 hover:bg-nude-800 transition-colors font-medium text-sm" onClick={() => setMode('none')}>

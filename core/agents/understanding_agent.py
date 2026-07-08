@@ -21,7 +21,7 @@ CRITICAL INSTRUCTIONS:
 2. Identify the main entry points (e.g., main.py, server.py, index.js, cli.py) based on standard conventions or provided data.
 3. Group the files into logical Subsystems or Modules (e.g., Backend, Frontend, Core Logic, Database).
 4. For every file provided, explain exactly what it does, what it is responsible for, and how it connects to other files (based on the imports/relationships shown).
-5. Output ONLY raw markdown. Do NOT wrap it in JSON. Do NOT use <think> tags in the final output markdown (you may use <think> before it).
+5. At the very end of your response, you MUST output the single most important entry point file path wrapped in <entry_point> tags. Example: <entry_point>backend/server.py</entry_point>. If there are multiple, pick the primary backend/app entry point.
 6. Make this document extremely in-depth so that another AI agent reading it will instantly know exactly where to go to fix a bug or add a feature.
 """
 
@@ -33,9 +33,9 @@ CRITICAL INSTRUCTIONS:
         self,
         on_token: Optional[Callable] = None,
         on_thinking: Optional[Callable] = None
-    ) -> str:
+    ) -> tuple[str, str]:
         """
-        Analyze the graph and semantic summaries, and generate a markdown architecture map.
+        Analyze the graph and semantic summaries, and generate a markdown architecture map and the entry point.
         """
         log.info("UnderstandingAgent: Generating codebase architecture map")
         
@@ -97,4 +97,12 @@ CRITICAL INSTRUCTIONS:
         cleaned = re.sub(r'<think>.*?</think>', '', raw_output, flags=re.DOTALL)
         cleaned = re.sub(r'Thinking\.\.\..*?\.\.\.done thinking\.', '', cleaned, flags=re.DOTALL)
         
-        return cleaned.strip()
+        # Extract entry point
+        entry_point = ""
+        match = re.search(r'<entry_point>(.*?)</entry_point>', cleaned, re.IGNORECASE | re.DOTALL)
+        if match:
+            entry_point = match.group(1).strip()
+            # Remove the tag from the final markdown notes
+            cleaned = re.sub(r'<entry_point>.*?</entry_point>', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
+        
+        return cleaned.strip(), entry_point

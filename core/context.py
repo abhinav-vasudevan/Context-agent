@@ -315,7 +315,7 @@ DO NOT write actual code files. Just write the highly detailed design document.
 Your job is to take a detailed Architectural Blueprint and translate it into a strict, step-by-step implementation plan.
 
 MANDATORY RULES:
-1. ENTRY POINT RULE (CRITICAL): At no cost should the project not have a starting point. Analyze the Architectural Blueprint to find the existing codebase entry point. If one exists (e.g., cli.py, index.js), plan to `<edit_file>` it to integrate new features. If it does NOT exist, create a new entry point and use it.
+1. ENTRY POINT RULE (CRITICAL): At no cost should the project not have a starting point. Analyze the Architectural Blueprint to find the existing codebase entry point. If one exists (e.g., cli.py, index.js), plan to `<edit_file>` it to integrate new features. If it does NOT exist and this is a new project, create a new entry point (e.g., main.py) and use it. If modifying an existing project, use the actual entry point.
 2. All other source files MUST be placed in feature-based subdirectories (e.g., `core/`, `backend/`, `frontend/`, `src/`, `components/`, `models/`). Do NOT put everything in a flat directory. Use a deep, modular structure.
 3. INTEGRATION: You MUST schedule an explicit integration step (usually the last step before README.md) to wire up your newly created modules into the identified entry point.
 4. The LAST step MUST be creating `README.md`.
@@ -585,6 +585,30 @@ Output ONLY the one-sentence summary, nothing else."""
                 truncated = LLMClient.truncate_to_tokens(summary_block, remaining)
                 parts.append(truncated)
                 used += LLMClient.count_tokens(truncated)
+
+        # 5. RAG Document Context
+        if hasattr(self.state, "user_documents") and self.state.user_documents and self.brain and self.brain.semantic:
+            doc_ids = [doc.id for doc in self.state.user_documents]
+            # Use step description and title as the query
+            query = f"{step.title} {step.description}"
+            chunks = self.brain.semantic.query_document_chunks(query, n_results=3, doc_ids=doc_ids)
+            
+            if chunks:
+                doc_context = "\n=== RELEVANT DOCUMENT CONTEXT (RAG) ===\n"
+                for chunk in chunks:
+                    source = chunk.get("source_file", "Unknown")
+                    content = chunk.get("document", "")
+                    doc_context += f"--- Source: {source} ---\n{content}\n\n"
+                
+                doc_tokens = LLMClient.count_tokens(doc_context)
+                remaining = budget - used - config.MIN_GENERATION_BUDGET
+                if doc_tokens <= remaining:
+                    parts.append(doc_context)
+                    used += doc_tokens
+                elif remaining > 200:
+                    truncated = LLMClient.truncate_to_tokens(doc_context, remaining)
+                    parts.append(truncated)
+                    used += LLMClient.count_tokens(truncated)
 
         generation_budget = budget - used
         log.info(

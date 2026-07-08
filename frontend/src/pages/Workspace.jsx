@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 import CodeViewer from '../components/CodeViewer';
-import { Terminal, FolderTree, Cpu, ArrowLeft, Send, Sparkles, BookOpen, Code2, User, ListTodo, CheckCircle2, Activity, Square, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
+import { Terminal, FolderTree, Cpu, ArrowLeft, Send, Sparkles, BookOpen, Paperclip, X, Code2, User, ListTodo, CheckCircle2, Activity, Square, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
 import ArchitectureGraph from '../components/ArchitectureGraph';
 
 export default function Workspace({ projectData, onBack }) {
@@ -15,7 +15,7 @@ export default function Workspace({ projectData, onBack }) {
   const [autoApprovePlan, setAutoApprovePlan] = useState(false);
   
   // Tabs
-  const [activeTab, setActiveTab] = useState('code'); // code or knowledge
+  const [activeTab, setActiveTab] = useState(projectData?.project_mode === 'docs' ? 'graph' : 'code'); // code or knowledge
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
   const [expandedEpics, setExpandedEpics] = useState({});
 
@@ -25,6 +25,7 @@ export default function Workspace({ projectData, onBack }) {
 
   // Chat History
   const [messages, setMessages] = useState([]);
+  const [attachedFiles, setAttachedFiles] = useState([]);
 
   // LLM stream (current message)
   const [llmText, setLlmText] = useState('');
@@ -205,22 +206,24 @@ export default function Workspace({ projectData, onBack }) {
 
   const handleSendPrompt = (e) => {
     e.preventDefault();
-    if (!prompt.trim()) return;
-    
+    if (!prompt.trim() && attachedFiles.length === 0) return;
+
     // Add user message to history
-    setMessages(prev => [...prev, { role: 'user', content: prompt.trim() }]);
-    
+    setMessages(prev => [...prev, { role: 'user', content: prompt.trim() || 'Attached documents.' }]);
+
     // Clear chat streaming state for new prompt
     setLlmText('');
     setThinkingText('');
-    
+
     // Determine whether to plan or follow-up
     const hasExistingPlan = project?.plan_steps && project.plan_steps.length > 0;
-    
-    if (hasExistingPlan) {
-      api.projectFollowup(prompt.trim()).catch(console.error);
+
+    if (hasExistingPlan || attachedFiles.length > 0) {
+      api.projectFollowup(prompt.trim() || 'Please process the attached documents.', attachedFiles)
+        .then(() => loadFiles())
+        .catch(console.error);
     } else {
-      api.generatePlan(prompt.trim()).then((res) => {
+      api.generatePlan(prompt.trim(), attachedFiles).then((res) => {
         if (res.success) {
           if (res.project) {
             setProject(res.project);
@@ -228,10 +231,12 @@ export default function Workspace({ projectData, onBack }) {
             setProject(prev => ({ ...prev, plan_steps: res.plan_steps }));
           }
         }
+        loadFiles();
       }).catch(console.error);
     }
-    
+
     setPrompt('');
+    setAttachedFiles([]);
     setTimeout(() => scrollToBottom(chatRef, true), 100);
   };
 
@@ -402,23 +407,27 @@ export default function Workspace({ projectData, onBack }) {
           )}
 
           <div className="flex h-10 border-b border-nude-700 bg-nude-850 shrink-0">
-            <button 
-              className={`px-4 flex items-center gap-2 border-r border-nude-700 text-xs font-mono uppercase tracking-widest transition-all ${activeTab === 'plan' ? 'bg-nude-900 text-nude-200 border-t-2 border-t-accent' : 'text-nude-500 hover:bg-nude-800 hover:text-nude-300 border-t-2 border-t-transparent'}`} 
-              onClick={() => setActiveTab('plan')}
-            >
-              <ListTodo size={14} /> Plan
-            </button>
-            <button 
-              className={`px-4 flex items-center gap-2 border-r border-nude-700 text-xs font-mono uppercase tracking-widest transition-all ${activeTab === 'code' ? 'bg-nude-900 text-nude-200 border-t-2 border-t-accent' : 'text-nude-500 hover:bg-nude-800 hover:text-nude-300 border-t-2 border-t-transparent'}`} 
-              onClick={() => setActiveTab('code')}
-            >
-              <Code2 size={14} /> Source Code
-            </button>
+            {project?.project_mode !== 'docs' && (
+              <>
+                <button 
+                  className={`px-4 flex items-center gap-2 border-r border-nude-700 text-xs font-mono uppercase tracking-widest transition-all ${activeTab === 'plan' ? 'bg-nude-900 text-nude-200 border-t-2 border-t-accent' : 'text-nude-500 hover:bg-nude-800 hover:text-nude-300 border-t-2 border-t-transparent'}`} 
+                  onClick={() => setActiveTab('plan')}
+                >
+                  <ListTodo size={14} /> Plan
+                </button>
+                <button 
+                  className={`px-4 flex items-center gap-2 border-r border-nude-700 text-xs font-mono uppercase tracking-widest transition-all ${activeTab === 'code' ? 'bg-nude-900 text-nude-200 border-t-2 border-t-accent' : 'text-nude-500 hover:bg-nude-800 hover:text-nude-300 border-t-2 border-t-transparent'}`} 
+                  onClick={() => setActiveTab('code')}
+                >
+                  <Code2 size={14} /> Source Code
+                </button>
+              </>
+            )}
             <button 
               className={`px-4 flex items-center gap-2 border-r border-nude-700 text-xs font-mono uppercase tracking-widest transition-all ${activeTab === 'graph' ? 'bg-nude-900 text-nude-200 border-t-2 border-t-accent' : 'text-nude-500 hover:bg-nude-800 hover:text-nude-300 border-t-2 border-t-transparent'}`} 
               onClick={() => setActiveTab('graph')}
             >
-              <BookOpen size={14} /> Knowledge
+              <BookOpen size={14} /> {project?.project_mode === 'docs' ? 'Documents' : 'Knowledge'}
             </button>
           </div>
           
@@ -773,10 +782,41 @@ export default function Workspace({ projectData, onBack }) {
           </div>
 
           <div className="p-4 bg-nude-850 shrink-0">
+            {attachedFiles.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-2">
+                {attachedFiles.map((file, idx) => (
+                  <div key={idx} className="flex items-center gap-2 bg-nude-800 border border-nude-700 rounded-full px-3 py-1 text-xs text-nude-200">
+                    <Paperclip size={12} className="text-accent" />
+                    <span className="truncate max-w-[150px]">{file.name}</span>
+                    <button type="button" onClick={() => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))} className="hover:text-red-400 transition-colors">
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <form onSubmit={handleSendPrompt} className="relative flex items-end bg-nude-900 border border-nude-700 rounded-xl focus-within:border-accent focus-within:ring-1 focus-within:ring-accent transition-all p-1">
+              <input
+                type="file"
+                multiple
+                id="chat-file-upload"
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files) {
+                    setAttachedFiles(prev => [...prev, ...Array.from(e.target.files)]);
+                  }
+                }}
+              />
+              <label 
+                htmlFor="chat-file-upload" 
+                className="w-8 h-8 m-1 flex-shrink-0 flex items-center justify-center text-nude-500 hover:text-accent cursor-pointer transition-colors"
+                title="Attach Documents"
+              >
+                <Paperclip size={16} />
+              </label>
               <textarea 
-                className="w-full bg-transparent border-none px-3 py-2 text-sm text-nude-200 focus:outline-none placeholder:text-nude-600 resize-none max-h-32 custom-scrollbar min-h-[44px]"
-                placeholder="Ask the agent to code..."
+                className="w-full bg-transparent border-none px-2 py-2.5 text-sm text-nude-200 focus:outline-none placeholder:text-nude-600 resize-none max-h-32 custom-scrollbar min-h-[40px]"
+                placeholder="Ask the agent to code, or attach docs..."
                 value={prompt}
                 onChange={e => setPrompt(e.target.value)}
                 onKeyDown={(e) => {
@@ -789,7 +829,7 @@ export default function Workspace({ projectData, onBack }) {
               />
               <button 
                 type="submit"
-                disabled={!prompt.trim()}
+                disabled={!prompt.trim() && attachedFiles.length === 0}
                 className="w-8 h-8 m-1 flex-shrink-0 flex items-center justify-center bg-nude-800 text-nude-400 rounded-lg hover:bg-nude-700 hover:text-accent disabled:opacity-50 transition-colors"
               >
                 <Send size={14} />

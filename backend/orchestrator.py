@@ -34,10 +34,12 @@ from core.agents.test_generator import TestGeneratorAgent
 from core.checkpoint import CheckpointManager
 from core.analyzer import IncrementalVerifier
 from core.ingestion.ingester import RepositoryIngester
+from core.ingestion.doc_ingester import UserDocumentIngester
 from core.templates.template_engine import TemplateEngine
 from models.state import ProjectState, StepStatus, PlanStep
 from models.hierarchy import ArchitectureSpec, ModuleSpec
 from backend.ws_manager import ConnectionManager
+from backend.chat_agent import ChatAgent
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +74,8 @@ class Orchestrator:
         self.test_generator: Optional[TestGeneratorAgent] = None
         self.verifier: Optional[IncrementalVerifier] = None
         self.ingester: Optional[RepositoryIngester] = None
+        self.doc_ingester: Optional[UserDocumentIngester] = None
+        self.chat_agent: Optional[ChatAgent] = None
         self.understanding_agent: Optional[UnderstandingAgent] = None
         self.template_engine: Optional[TemplateEngine] = None
         
@@ -102,14 +106,17 @@ class Orchestrator:
         
         # Concurrency locks
         self._ingestion_lock = asyncio.Lock()
+        self._planning_lock = asyncio.Lock()
+        self._execution_lock = asyncio.Lock()
 
     # ── Project Lifecycle ─────────────────────────────────────────────
 
-    async def create_project(self, name: str, prompt: str = "", target_dir: str = None) -> dict:
+    async def create_project(self, name: str, prompt: str = "", target_dir: str = None, mode: str = "build") -> dict:
         """Create a new project workspace."""
         self.state = ProjectState()
         self.state.project_name = name
         self.state.original_prompt = prompt
+        self.state.project_mode = mode
 
         # Create workspace
         if target_dir:
@@ -166,14 +173,44 @@ class Orchestrator:
         self.understanding_agent = UnderstandingAgent(self.llm, self.brain)
         venv_path = Path(self.state.venv_path) if self.state.venv_path else None
         self.verifier = IncrementalVerifier(self.workspace_dir, venv_path)
-        self.ingester = RepositoryIngester(self.workspace_dir, self.brain, self.summarizer, self.understanding_agent)
+        self.ingester = RepositoryIngester(self.workspace_dir, self.brain, self.summarizer, self.understanding_agent, state=self.state)
+        self.doc_ingester = UserDocumentIngester(self.llm, self.brain.semantic, self.state)
+        self.chat_agent = ChatAgent(self.llm, self.ws, self.state)
+        self.context_engine = ContextEngine(self.brain, self.ws)
         self.template_engine = TemplateEngine()
 
         self.state.status = "idle"
         self.state.save(self.workspace_dir / "project_state.json")
 
+        # Auto-ingest if there are files in target_dir (prevent isolated environment hallucination)
+        has_files = any(
+            f.name not in [".venv", "venv", "__pycache__", ".git", ".agent_brain"]
+            for f in self.workspace_dir.iterdir()
+        )
+        if has_files:
+            asyncio.create_task(self.ingest_codebase())
+
         await self.ws.send_status("ready", f"Project '{name}' created")
         return {"success": True, "project": self.state.to_api_dict()}
+        
+    async def auto_build_from_file(self, file_path: str, prompt: str):
+        """Automatically generate plan from uploaded file and start execution."""
+        try:
+            await self.ws.send_status("planning", "Auto-generating plan from uploaded document...")
+            res = await self.generate_plan(prompt, [file_path])
+            if res.get("success"):
+                await self.ws.send_status("planning", "Plan generated successfully. Auto-approving...")
+                app_res = await self.approve_plan()
+                if app_res.get("success"):
+                    await self.ws.send_status("executing", "Starting execution automatically...")
+                    await self.execute_all()
+                else:
+                    await self.ws.send_status("failed", "Failed to auto-approve plan.")
+            else:
+                await self.ws.send_status("failed", f"Failed to generate plan: {res.get('error')}")
+        except Exception as e:
+            log.error("auto_build_from_file error: %s", repr(e))
+            await self.ws.send_error(f"Auto build failed: {str(e)}")
 
     async def load_project(self, workspace_path: str) -> dict:
         """Resume an existing project from its workspace."""
@@ -198,7 +235,7 @@ class Orchestrator:
         
         # Re-initialize V2 subsystems
         self.brain = ProjectBrain(self.workspace_dir)
-        self.context_engine = ContextEngine(self.brain, self.state)
+        self.context_engine = ContextEngine(self.brain, self.ws)
         
         self.master_planner = MasterPlanner(self.llm)
         self.coder = Coder(self.llm, self.state, self.workspace_dir)
@@ -209,7 +246,9 @@ class Orchestrator:
         self.test_generator = TestGeneratorAgent(self.llm)
         self.understanding_agent = UnderstandingAgent(self.llm, self.brain)
         self.verifier = IncrementalVerifier(self.workspace_dir, venv_path)
-        self.ingester = RepositoryIngester(self.workspace_dir, self.brain, self.summarizer, self.understanding_agent)
+        self.ingester = RepositoryIngester(self.workspace_dir, self.brain, self.summarizer, self.understanding_agent, state=self.state)
+        self.doc_ingester = UserDocumentIngester(self.llm, self.brain.semantic, self.state)
+        self.chat_agent = ChatAgent(self.llm, self.ws, self.state)
         self.template_engine = TemplateEngine()
 
         await self.ws.send_status("ready", f"Project '{self.state.project_name}' loaded")
@@ -244,7 +283,7 @@ class Orchestrator:
                         if not hasattr(self.state, 'ingested_architecture_notes'):
                             self.state.ingested_architecture_notes = ""
                         self.state.ingested_architecture_notes = self.brain.latest_architecture_notes
-                        self.state.save(self.workspace_dir / "project_state.json")
+                    self.state.save(self.workspace_dir / "project_state.json")
                     
                     await self.ws.send_status("ready", "Codebase ingestion completed successfully.")
                     return {"success": True}
@@ -254,127 +293,156 @@ class Orchestrator:
             except Exception as e:
                 import traceback
                 error_details = traceback.format_exc()
-                log.error(f"Ingestion aborted due to unexpected error:\\n{error_details}")
+                log.error(f"Ingestion aborted due to unexpected error:\n{error_details}")
                 await self.ws.send_status("error", f"Codebase ingestion failed unexpectedly: {str(e)}")
                 return {"success": False, "error": str(e)}
 
     # ── Planning ──────────────────────────────────────────────────────
 
-    async def generate_plan(self, prompt: str = "") -> dict:
+    async def generate_plan(self, prompt: str = "", file_paths: list[str] = None) -> dict:
         """Generate the implementation plan using V2 Hierarchical Planning."""
-        
-        if self._ingestion_lock.locked():
-            await self.ws.send_status("planning", "Waiting for codebase ingestion to finish before planning...")
-            
-        async with self._ingestion_lock:
-            if not self.state or not self.master_planner:
-                return {"success": False, "error": "No project loaded"}
-
-        if prompt:
-            self.state.original_prompt = prompt
-            self.state.chat_history.append({"role": "user", "content": prompt})
-            self.state.save(self.workspace_dir / "project_state.json")
-
-        if not self.state.original_prompt:
-            return {"success": False, "error": "No prompt provided"}
-
-        planning_prompt = self.state.original_prompt
-        if getattr(self.state, "ingested_architecture_notes", ""):
-            planning_prompt = f"Existing Codebase Architecture Context:\n{self.state.ingested_architecture_notes}\n\nUSER REQUEST:\n{planning_prompt}"
-            
-        if SmartChunker.needs_chunking(planning_prompt):
-            chunks = SmartChunker.chunk(planning_prompt)
-            planning_prompt = chunks[0] + "\n\n[Prompt truncated for planning...]"
-
-        # Determine Complexity / Epics
-        self.state.status = "architecting"
-        await self.ws.send_status("planning", "Stage 1: Determining complexity and bounded domains (Epics)...")
-        
-        epic_chunks = []
-        def on_epic_token(token: str):
-            epic_chunks.append(token)
-            asyncio.ensure_future(self.ws.send_llm_token(token))
-            
+        await self._planning_lock.acquire()
         try:
-            entry_point, epics = await self.master_planner.generate_epic_queue(planning_prompt, on_token=on_epic_token)
-            self.state.project_entry_point = entry_point
-            self.state.epic_queue = epics
-            if epics:
-                self.state.project_scale = epics[0].scale_estimate.value
-            await self.ws.send_llm_done("".join(epic_chunks))
-        except Exception as e:
-            err_msg = str(e)
-            await self.ws.send_error(f"Complexity Generation Error: {err_msg}")
-            self.state.status = "failed"
-            return {"success": False, "error": err_msg}
+            if self._ingestion_lock.locked():
+                await self.ws.send_status("planning", "Waiting for codebase ingestion to finish before planning...")
+                
+            async with self._ingestion_lock:
+                if not self.state or not self.master_planner:
+                    return {"success": False, "error": "No project loaded"}
 
-        is_massive = self.state.project_scale in ["large", "massive"]
+            if prompt:
+                self.state.original_prompt = prompt
+                self.state.chat_history.append({"role": "user", "content": prompt})
+                self.state.save(self.workspace_dir / "project_state.json")
+            if not self.state.original_prompt:
+                return {"success": False, "error": "No prompt provided"}
 
-        if not is_massive:
-            # ── Monolithic Planning for SIMPLE/MEDIUM projects ──
-            await self.ws.send_status("planning", "Project is simple/medium. Generating full architecture...")
+            if file_paths:
+                for fp in file_paths:
+                    from pathlib import Path
+                    await self.doc_ingester.ingest_document(fp, Path(fp).name, on_status=self.ws.send_status)
+                
+                extracted_reqs = await self.chat_agent.process_task(
+                    "Extract a detailed master specification and architecture plan from these documents to build the software.",
+                    self.state.user_documents, 
+                    return_result=True
+                )
+                self.state.global_master_summary = extracted_reqs
+                self.state.save(self.workspace_dir / "project_state.json")
+
+
+            planning_prompt = self.state.original_prompt
+            if getattr(self.state, "ingested_architecture_notes", ""):
+                planning_prompt = f"Existing Codebase Architecture Context:\n{self.state.ingested_architecture_notes}\n\nUSER REQUEST:\n{planning_prompt}"
+                
+            if getattr(self.state, "global_master_summary", ""):
+                planning_prompt = f"GLOBAL MASTER SPECIFICATION (from uploaded documents):\n{self.state.global_master_summary}\n\n{planning_prompt}"
+            elif hasattr(self.state, "user_documents") and self.state.user_documents:
+                summaries = [doc.master_summary for doc in self.state.user_documents]
+                planning_prompt = f"PROJECT MASTER SPECIFICATIONS (from uploaded documents):\n" + "\n---\n".join(summaries) + f"\n\n{planning_prompt}"
+                
+            if getattr(self.state, "project_mode", "") == "ingest":
+                planning_prompt += "\n\nCRITICAL RULE FOR INGESTION MODE: You MUST prioritize editing existing files (like the root main.py). Do NOT create new files or new entry points unless absolutely necessary to avoid breaking the existing architecture. Your goal is to integrate directly into the old code."
+                
+            if SmartChunker.needs_chunking(planning_prompt):
+                chunks = SmartChunker.chunk(planning_prompt)
+                planning_prompt = chunks[0] + "\n\n[Prompt truncated for planning...]"
+
+            # Determine Complexity / Epics
+            self.state.status = "architecting"
+            await self.ws.send_status("planning", "Stage 1: Determining complexity and bounded domains (Epics)...")
             
-            arch_chunks = []
-            def on_arch_token(token: str):
-                arch_chunks.append(token)
+            epic_chunks = []
+            def on_epic_token(token: str):
+                epic_chunks.append(token)
                 asyncio.ensure_future(self.ws.send_llm_token(token))
                 
             try:
-                arch_spec = await self.master_planner.generate_vision(planning_prompt, on_token=on_arch_token)
-                arch_spec = await self.master_planner.generate_services(arch_spec, planning_prompt, on_token=on_arch_token)
-                self.brain.ingest_architecture(arch_spec, self.state.project_name)
-                self.state.architecture_text = self.master_planner.format_vision_for_display(arch_spec)
-                self.state.plan_steps = self.master_planner.flatten_to_plan_steps(arch_spec)
+                entry_point, epics = await self.master_planner.generate_epic_queue(planning_prompt, on_token=on_epic_token)
+                self.state.project_entry_point = entry_point
+                self.state.epic_queue = epics
+                if epics:
+                    self.state.project_scale = epics[0].scale_estimate.value
+                await self.ws.send_llm_done("".join(epic_chunks))
             except Exception as e:
-                return {"success": False, "error": str(e)}
-        else:
-            # ── JIT Epic Planning for LARGE/MASSIVE projects ──
-            await self.ws.send_status("planning", f"Project is {self.state.project_scale.upper()}. Using JIT Epic Planning...")
-            
-            # Format Epics for display instead of a full architecture
-            lines = [f"# {self.state.project_name} - {self.state.project_scale.upper()} Scale"]
-            lines.append("\nThis is a massive project. It will be built iteratively via the following Epics:\n")
-            for i, epic in enumerate(self.state.epic_queue):
-                lines.append(f"## Epic {i+1}: {epic.name}")
-                lines.append(f"Purpose: {epic.purpose}")
-                lines.append(f"API Contract: {', '.join(epic.public_api_contract)}")
-                if epic.depends_on_epics:
-                    lines.append(f"Depends on: {', '.join(epic.depends_on_epics)}")
-                lines.append("")
+                err_msg = str(e)
+                await self.ws.send_error(f"Complexity Generation Error: {err_msg}")
+                self.state.status = "failed"
+                return {"success": False, "error": err_msg}
+
+            is_massive = self.state.project_scale in ["large", "massive"]
+
+            if not is_massive:
+                # ── Monolithic Planning for SIMPLE/MEDIUM projects ──
+                await self.ws.send_status("planning", "Project is simple/medium. Generating full architecture...")
                 
-            self.state.architecture_text = "\n".join(lines)
-            self.state.plan_steps = []  # Will be populated JIT during execution
+                arch_chunks = []
+                def on_arch_token(token: str):
+                    arch_chunks.append(token)
+                    asyncio.ensure_future(self.ws.send_llm_token(token))
+                    
+                try:
+                    arch_spec = await self.master_planner.generate_vision(planning_prompt, on_token=on_arch_token)
+                    arch_spec = await self.master_planner.generate_services(arch_spec, planning_prompt, on_token=on_arch_token)
+                    self.brain.ingest_architecture(arch_spec, self.state.project_name)
+                    self.state.architecture_text = self.master_planner.format_vision_for_display(arch_spec)
+                    self.state.plan_steps = self.master_planner.flatten_to_plan_steps(arch_spec)
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+            else:
+                # ── JIT Epic Planning for LARGE/MASSIVE projects ──
+                await self.ws.send_status("planning", f"Project is {self.state.project_scale.upper()}. Using JIT Epic Planning...")
+                
+                # Format Epics for display instead of a full architecture
+                lines = [f"# {self.state.project_name} - {self.state.project_scale.upper()} Scale"]
+                lines.append("\nThis is a massive project. It will be built iteratively via the following Epics:\n")
+                for i, epic in enumerate(self.state.epic_queue):
+                    lines.append(f"## Epic {i+1}: {epic.name}")
+                    lines.append(f"Purpose: {epic.purpose}")
+                    lines.append(f"API Contract: {', '.join(epic.public_api_contract)}")
+                    if epic.depends_on_epics:
+                        lines.append(f"Depends on: {', '.join(epic.depends_on_epics)}")
+                    lines.append("")
+                    
+                self.state.architecture_text = "\n".join(lines)
+                self.state.plan_steps = []  # Will be populated JIT during execution
+                
+            arch_path = self.workspace_dir / "architecture.md"
+            arch_path.write_text(self.state.architecture_text, encoding="utf-8")
             
-        arch_path = self.workspace_dir / "architecture.md"
-        arch_path.write_text(self.state.architecture_text, encoding="utf-8")
-        
-        # Generate simple plan_text string for backward compatibility with frontend
-        plan_lines = []
-        for s in self.state.plan_steps:
-            plan_lines.append(f"Step {s.step_number}: {s.title}\nFILE: {s.file_path}\nDESCRIPTION: {s.description}\n")
-        self.state.plan_text = "\n".join(plan_lines)
-        plan_path = self.workspace_dir / "plan.txt"
-        plan_path.write_text(self.state.plan_text, encoding="utf-8")
+            # Generate simple plan_text string for backward compatibility with frontend
+            plan_lines = []
+            for s in self.state.plan_steps:
+                plan_lines.append(f"Step {s.step_number}: {s.title}\nFILE: {s.file_path}\nDESCRIPTION: {s.description}\n")
+            self.state.plan_text = "\n".join(plan_lines)
+            plan_path = self.workspace_dir / "plan.txt"
+            plan_path.write_text(self.state.plan_text, encoding="utf-8")
 
-        self.state.status = "plan_review"
-        self.state.save(self.workspace_dir / "project_state.json")
+            self.state.status = "plan_review"
+            self.state.save(self.workspace_dir / "project_state.json")
 
-        # Send plan to frontend
-        plan_data = [
-            {
-                "step_number": s.step_number,
-                "title": s.title,
-                "file_path": s.file_path,
-                "description": s.description,
-                "status": s.status.value,
-                "depends_on": s.depends_on,
-            }
-            for s in self.state.plan_steps
-        ]
-        await self.ws.send_plan_update(plan_data)
-        await self.ws.send_status("plan_review", "Hierarchical Plan generated. Review and approve to begin execution.")
+            # Send plan to frontend
+            plan_data = [
+                {
+                    "step_number": s.step_number,
+                    "title": s.title,
+                    "file_path": s.file_path,
+                    "description": s.description,
+                    "status": s.status.value,
+                    "depends_on": s.depends_on,
+                }
+                for s in self.state.plan_steps
+            ]
+            await self.ws.send_plan_update(plan_data)
+            await self.ws.send_status("plan_review", "Hierarchical Plan generated. Review and approve to begin execution.")
 
-        return {"success": True, "plan_steps": plan_data}
+            return {"success": True, "plan_steps": plan_data}
+        except Exception as e:
+            log.error(f"Planning failed: {str(e)}")
+            await self.ws.send_status("error", f"Planning failed: {str(e)}")
+            return {"success": False, "error": str(e)}
+        finally:
+            self._planning_lock.release()
 
     async def approve_plan(self) -> dict:
         """Approve the plan and mark it ready for execution."""
@@ -398,23 +466,24 @@ class Orchestrator:
         4. Run QA Agent to test main.py with LLM-driven inputs
         5. Fix any errors found during QA testing
         """
-        if not self.state or not self.state.plan_approved:
-            return {"success": False, "error": "Plan not approved"}
-
-        if self._executing:
-            return {"success": False, "error": "Already executing"}
-
-        self._executing = True
-        self._cancel_requested = False
-        self.state.status = "executing"
-
-        ckpt = CheckpointManager.load(self.workspace_dir)
-        resume_epic_id = None
-        if ckpt:
-            resume_epic_id = ckpt.get("current_epic_id")
-            await self.ws.send_status("resuming", "Resuming from checkpoint...")
-
+        await self._execution_lock.acquire()
         try:
+            if not self.state or not self.state.plan_approved:
+                return {"success": False, "error": "Plan not approved"}
+
+            if self._executing:
+                return {"success": False, "error": "Already executing"}
+
+            self._executing = True
+            self._cancel_requested = False
+            self.state.status = "executing"
+
+            ckpt = CheckpointManager.load(self.workspace_dir)
+            resume_epic_id = None
+            if ckpt:
+                resume_epic_id = ckpt.get("current_epic_id")
+                await self.ws.send_status("resuming", "Resuming from checkpoint...")
+
             epics_to_run = self.state.epic_queue if self.state.project_scale in ["large", "massive"] else [None]
             
             for epic_idx, epic in enumerate(epics_to_run):
@@ -524,21 +593,7 @@ class Orchestrator:
                             full_path.write_text(content, encoding="utf-8")
                             await self.ws.send_file_update(file_path, content)
                             
-                        # ── Phase 8: Generate TDD Tests ──
-                        await self.ws.send_status("scaffolding", "Generating TDD tests for stubs...")
-                        tests = await self.test_generator.generate_tests(stubs, on_token=on_stub_token)
-                        
-                        if self._cancel_requested:
-                            await self.ws.send_status("cancelled", "Execution cancelled by user")
-                            break
-                            
-                        for test_file_path, test_content in tests.items():
-                            full_path = self.workspace_dir / test_file_path
-                            full_path.parent.mkdir(parents=True, exist_ok=True)
-                            full_path.write_text(test_content, encoding="utf-8")
-                            await self.ws.send_file_update(test_file_path, test_content)
-                            
-                        await self.ws.send_status("scaffolding", "Skeleton scaffolding and TDD generation complete.")
+                        await self.ws.send_status("scaffolding", "Skeleton scaffolding complete (TDD Disabled).")
 
                 # ── Phase 1: Write ALL files ──────────────────────────────
                 await self.ws.send_status("executing", "Phase 1: Generating implementation logic...")
@@ -628,17 +683,12 @@ class Orchestrator:
                 "usage": usage,
             }
         except Exception as e:
-            import traceback
-            error_details = traceback.format_exc()
-            log.error(f"Execution aborted due to unexpected error:\\n{error_details}")
-            self.state.status = "error"
-            try:
-                await self.ws.send_status("error", f"Execution failed unexpectedly: {str(e)}")
-            except Exception:
-                pass
+            log.error(f"Execution pipeline failed: {str(e)}")
+            await self.ws.send_status("error", f"Execution failed: {str(e)}")
             return {"success": False, "error": str(e)}
         finally:
             self._executing = False
+            self._execution_lock.release()
 
     async def execute_single_step(self, step_number: int) -> dict:
         """Execute a specific step by number."""
@@ -1052,7 +1102,7 @@ class Orchestrator:
         
         return {"success": True, "message": "Skipping to next phase..."}
 
-    async def handle_manual_fix(self, prompt: str) -> dict:
+    async def handle_manual_fix(self, prompt: str, file_paths: list[str] = None) -> dict:
         """Handle a followup request from the user (e.g. 'run the tests' or 'add a login page')."""
         if not self.state:
             return {"success": False, "error": "No project loaded"}
@@ -1063,11 +1113,12 @@ class Orchestrator:
         await self.ws.send_status("planning", "Analyzing user request intent...")
         
         # Determine intent
-        intent_prompt = f"""You must classify the following user request into one of two categories:
+        intent_prompt = f"""You must classify the following user request into one of three categories:
 1. "bug_fix": The user is pasting an error, traceback, or asking to fix a broken feature/bug.
 2. "feature_update": The user is asking to add a new feature, change the architecture, or implement something new.
+3. "document_task": The user is asking a conversational question, asking to summarize attached documents, compare them, or perform a general QA task.
 
-Respond with exactly one word: either "bug_fix" or "feature_update".
+Respond with exactly one word: either "bug_fix", "feature_update", or "document_task".
 
 USER REQUEST:
 {prompt}
@@ -1075,16 +1126,41 @@ USER REQUEST:
         try:
             intent_raw = await self.llm.generate(prompt=intent_prompt, system="You are an intent classifier. Respond with ONE word.")
             intent = intent_raw.strip().lower()
-            # fallback to feature update if LLM babbles
-            if "bug" in intent or "fix" in intent or "error" in intent:
-                is_feature = False
+            if "doc" in intent or "chat" in intent or "sum" in intent or intent == "document_task":
+                intent_type = "document_task"
+            elif "bug" in intent or "fix" in intent or "error" in intent:
+                intent_type = "bug_fix"
             else:
-                is_feature = True
+                intent_type = "feature_update"
         except Exception:
-            is_feature = True  # default to feature if LLM fails here
+            intent_type = "feature_update"  # default to feature if LLM fails here
+
+        if intent_type == "document_task":
+            await self.ws.send_status("processing", "Request classified as Document Task. Reading documents...")
+            if file_paths:
+                for fp in file_paths:
+                    from pathlib import Path
+                    await self.doc_ingester.ingest_document(fp, Path(fp).name, on_status=self.ws.send_status)
             
-        if is_feature:
+            await self.chat_agent.process_task(prompt, self.state.user_documents)
+            return {"success": True, "message": "Document task processed."}
+
+        if intent_type == "feature_update":
             await self.ws.send_status("planning", "Request classified as Feature Update. Generating new plan...")
+            
+            if file_paths:
+                for fp in file_paths:
+                    from pathlib import Path
+                    await self.doc_ingester.ingest_document(fp, Path(fp).name, on_status=self.ws.send_status)
+                
+                extracted_reqs = await self.chat_agent.process_task(
+                    "Extract a detailed master specification and architecture plan from these documents to build the requested feature.",
+                    self.state.user_documents, 
+                    return_result=True
+                )
+                self.state.global_master_summary = extracted_reqs
+                self.state.save(self.workspace_dir / "project_state.json")
+                
             return await self._update_project(prompt)
 
         # Fall back to the original bug fix logic
@@ -1114,8 +1190,15 @@ USER REQUEST:
             async def send_thinking(t):
                 await self.ws.send_llm_thinking(t)
                 
+            update_prompt = prompt
+            if getattr(self.state, "global_master_summary", ""):
+                update_prompt = f"GLOBAL MASTER SPECIFICATION (from uploaded documents):\n{self.state.global_master_summary}\n\n{update_prompt}"
+            elif hasattr(self.state, "user_documents") and self.state.user_documents:
+                summaries = [doc.master_summary for doc in self.state.user_documents]
+                update_prompt = f"PROJECT MASTER SPECIFICATIONS (from uploaded documents):\n" + "\n---\n".join(summaries) + f"\n\n{update_prompt}"
+
             update_steps = await self.master_planner.generate_update_plan(
-                prompt=prompt,
+                prompt=update_prompt,
                 state=self.state,
                 on_token=send_token,
                 on_thinking=send_thinking
@@ -1281,3 +1364,36 @@ USER REQUEST:
             asyncio.create_task(self.execute_all())
             
         return {"success": True}
+
+    # ── Document Processing ───────────────────────────────────────────
+
+    async def ingest_user_document(self, file_path: str, doc_id: str) -> dict:
+        """Ingests a large user document into the system state and semantic store."""
+        if not self.state or not self.doc_ingester:
+            return {"success": False, "error": "No active project"}
+            
+        try:
+            async def send_status(msg: str):
+                await self.ws.send_status("document_ingestion", msg)
+                
+            doc = await self.doc_ingester.ingest_document(file_path, doc_id, on_status=send_status)
+            return {"success": True, "document": doc.to_dict()}
+        except Exception as e:
+            import traceback
+            log.error(f"Failed to ingest document {file_path}: {e}\n{traceback.format_exc()}")
+            return {"success": False, "error": str(e)}
+
+    async def consolidate_documents(self) -> dict:
+        """Consolidates all ingested documents into a single master specification."""
+        if not self.state or not self.doc_ingester:
+            return {"success": False, "error": "No active project"}
+            
+        try:
+            await self.ws.send_status("document_consolidation", "Consolidating all documents into master specification...")
+            summary = await self.doc_ingester.consolidate_all_documents()
+            await self.ws.send_status("document_consolidation", "Master specification ready.")
+            return {"success": True, "master_specification": summary}
+        except Exception as e:
+            import traceback
+            log.error(f"Failed to consolidate documents: {e}\n{traceback.format_exc()}")
+            return {"success": False, "error": str(e)}

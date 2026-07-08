@@ -120,7 +120,7 @@ You must output a STRICT JSON object with this schema:
 
 MANDATORY RULES:
 1. File paths MUST use a domain-driven folder structure (e.g. backend/api.py, frontend/app.js, core/memory.py).
-2. ENTRY POINT MANDATE: A project must ALWAYS have a clear starting point. Use the `project_entry_point` if it exists. If generating a project from scratch, output main.py at the root to wire up your services.
+2. ENTRY POINT MANDATE: A project must ALWAYS have a clear starting point. Use the `project_entry_point` if it exists. If generating a project from scratch and no entry point exists, output main.py at the root to wire up your services. If you are modifying an existing codebase, you MUST use the actual existing entry point.
 3. INTEGRATION MANDATE: If modifying an existing codebase, you MUST identify existing entry points from the context and output a module modification for them to import and integrate your new services. Do NOT leave new code files disconnected from the rest of the project.
 4. The very last file overall is ALWAYS README.md.
 5. Include a requirements.txt or package.json as needed.
@@ -533,7 +533,7 @@ Break each subsystem into concrete services and file modules now."""
         for subsystem in arch.subsystems:
             for service in subsystem.services:
                 for module in service.modules:
-                    if module.file_path in ("main.py", "README.md", "requirements.txt"):
+                    if module.file_path in ("README.md", "requirements.txt"):
                         continue
 
                     # Build a rich description that includes architecture context
@@ -622,8 +622,13 @@ Format:
 
         files_context = "\n".join([f"- {entry.path}" for entry in state.file_registry])
         
+        master_summary_context = ""
+        if state.user_documents:
+            summaries = [doc.master_summary for doc in state.user_documents]
+            master_summary_context = f"\n\nPROJECT MASTER SPECIFICATIONS:\n" + "\n---\n".join(summaries)
+        
         user_prompt = f"""USER REQUEST:
-{prompt}
+{prompt}{master_summary_context}
 
 CURRENT FILES IN REGISTRY:
 {files_context}

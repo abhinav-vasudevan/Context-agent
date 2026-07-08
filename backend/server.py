@@ -13,7 +13,8 @@ import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
+import shutil
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -131,11 +132,34 @@ async def list_projects():
 
 
 @app.post("/api/project/create")
-async def create_project(req: CreateProjectRequest):
+async def create_project(
+    name: str = Form(...),
+    prompt: str = Form(""),
+    mode: str = Form("build"),
+    file: UploadFile = File(None)
+):
     """Create a new project."""
-    result = await orchestrator.create_project(req.name, req.prompt)
+    file_path = None
+    if file:
+        # We need a temporary place or just let orchestrator handle it.
+        # But wait, orchestrator doesn't know where to save until it creates the workspace.
+        pass
+        
+    result = await orchestrator.create_project(name, prompt, mode=mode)
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result.get("error", "Failed to create project"))
+        
+    if file:
+        docs_dir = orchestrator.workspace_dir / "documents"
+        docs_dir.mkdir(exist_ok=True)
+        saved_file_path = docs_dir / file.filename
+        with open(saved_file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # If build mode, auto-trigger the plan generation
+        if mode == "build":
+            asyncio.create_task(orchestrator.auto_build_from_file(str(saved_file_path), prompt))
+            
     return result
 
 
@@ -151,7 +175,7 @@ async def load_project(req: LoadProjectRequest):
 @app.post("/api/project/ingest")
 async def ingest_project(req: IngestRequest):
     """Create a project from an existing codebase path and ingest it."""
-    result = await orchestrator.create_project(name=req.name, prompt="", target_dir=req.path)
+    result = await orchestrator.create_project(name=req.name, prompt="", target_dir=req.path, mode="ingest")
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result.get("error", "Failed to setup workspace for ingestion"))
     
@@ -182,21 +206,52 @@ async def get_architecture_graph():
         return {"success": False, "error": str(e), "graph": {"nodes": [], "links": []}}
 
 
+from typing import List
+
 @app.post("/api/project/followup")
-async def project_followup(req: FollowupRequest):
-    """Trigger a manual fix/followup for the project."""
+async def project_followup(text: str = Form(...), files: List[UploadFile] = File(None)):
+    """Trigger a manual fix/followup for the project, with optional files."""
     if not orchestrator.state:
         raise HTTPException(status_code=404, detail="No project loaded")
-    result = await orchestrator.handle_manual_fix(req.text)
+    
+    # Process files if any
+    file_paths = []
+    if files:
+        docs_dir = orchestrator.workspace_dir / "documents"
+        docs_dir.mkdir(exist_ok=True)
+        for file in files:
+            file_path = docs_dir / file.filename
+            with open(file_path, "wb") as buffer:
+                import shutil
+                shutil.copyfileobj(file.file, buffer)
+            file_paths.append(str(file_path))
+
+    result = await orchestrator.handle_manual_fix(text, file_paths)
     if not result["success"]:
-        raise HTTPException(status_code=400, detail=result.get("error", "Followup failed"))
+        raise HTTPException(status_code=400, detail=result.get("error", "Fix failed"))
     return result
 
-
 @app.post("/api/plan/generate")
-async def generate_plan(req: PromptRequest):
-    """Generate the implementation plan."""
-    result = await orchestrator.generate_plan(req.prompt)
+async def generate_plan(prompt: str = Form(...), files: List[UploadFile] = File(None)):
+    """Generate the implementation plan, with optional files."""
+    # Process files if any
+    file_paths = []
+    if files:
+        if not orchestrator.workspace_dir:
+            # We don't have a workspace yet? generate_plan runs after project/create.
+            # So workspace should exist.
+            pass
+        else:
+            docs_dir = orchestrator.workspace_dir / "documents"
+            docs_dir.mkdir(exist_ok=True)
+            for file in files:
+                file_path = docs_dir / file.filename
+                with open(file_path, "wb") as buffer:
+                    import shutil
+                    shutil.copyfileobj(file.file, buffer)
+                file_paths.append(str(file_path))
+
+    result = await orchestrator.generate_plan(prompt, file_paths)
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result.get("error", "Plan generation failed"))
     return result
@@ -355,3 +410,30 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# ── Document Endpoints ──────────────────────────────────────────────
+
+@app.post("/api/documents/ingest")
+async def ingest_document(file: UploadFile = File(...), doc_id: str = Form(...)):
+    if not orchestrator.workspace_dir:
+        raise HTTPException(status_code=400, detail="No active project workspace.")
+        
+    # Save the uploaded file to a temporary location in the workspace
+    docs_dir = orchestrator.workspace_dir / "documents"
+    docs_dir.mkdir(exist_ok=True)
+    file_path = docs_dir / file.filename
+    
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    result = await orchestrator.ingest_user_document(str(file_path), doc_id)
+    if not result["success"]:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
+@app.post("/api/documents/consolidate")
+async def consolidate_documents():
+    result = await orchestrator.consolidate_documents()
+    if not result["success"]:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result

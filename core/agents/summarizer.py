@@ -75,7 +75,7 @@ Output ONLY the JSON object. No markdown. No explanation."""
 
         prompt = f"FILE PATH: {file_path}\n\nSOURCE CODE:\n```{lang}\n{truncated_code}\n```"
 
-        raw_output = await self.llm.generate(prompt=prompt, system=self.SYSTEM_PROMPT)
+        raw_output = await self.llm.generate(prompt=prompt, system=self.SYSTEM_PROMPT, disable_think=True)
 
         return self._parse_summary(raw_output, file_path)
 

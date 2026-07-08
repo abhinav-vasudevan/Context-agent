@@ -30,11 +30,25 @@ export const api = {
 
   // Projects
   listProjects: () => request('/api/projects'),
-  createProject: (name, prompt = '') =>
-    request('/api/project/create', {
+  createProject: (name, prompt = '', mode = 'build', file = null) => {
+    const formData = new FormData();
+    formData.append('name', name);
+    formData.append('prompt', prompt);
+    formData.append('mode', mode);
+    if (file) {
+      formData.append('file', file);
+    }
+    return fetch(`${API_BASE}/api/project/create`, {
       method: 'POST',
-      body: JSON.stringify({ name, prompt }),
-    }),
+      body: formData,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(error.detail || `Request failed: ${res.status}`);
+      }
+      return res.json();
+    });
+  },
   loadProject: (workspacePath) =>
     request('/api/project/load', {
       method: 'POST',
@@ -46,18 +60,44 @@ export const api = {
       body: JSON.stringify({ name, path }),
     }),
   getProjectState: () => request('/api/project/state'),
-  projectFollowup: (text) => 
-    request('/api/project/followup', {
+  projectFollowup: (text, files = []) => {
+    const formData = new FormData();
+    formData.append('text', text);
+    if (files) {
+      files.forEach(f => formData.append('files', f));
+    }
+    
+    return fetch(`${API_BASE}/api/project/followup`, {
       method: 'POST',
-      body: JSON.stringify({ text }),
-    }),
+      body: formData,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(error.detail || `Request failed: ${res.status}`);
+      }
+      return res.json();
+    });
+  },
 
   // Plan
-  generatePlan: (prompt) =>
-    request('/api/plan/generate', {
+  generatePlan: (prompt, files = []) => {
+    const formData = new FormData();
+    formData.append('prompt', prompt);
+    if (files) {
+      files.forEach(f => formData.append('files', f));
+    }
+    
+    return fetch(`${API_BASE}/api/plan/generate`, {
       method: 'POST',
-      body: JSON.stringify({ prompt }),
-    }),
+      body: formData,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(error.detail || `Request failed: ${res.status}`);
+      }
+      return res.json();
+    });
+  },
   approvePlan: () =>
     request('/api/plan/approve', { method: 'POST' }),
 
@@ -94,4 +134,24 @@ export const api = {
   // Files
   getFile: (filePath) => request(`/api/file/${filePath}`),
   listFiles: () => request('/api/files'),
+
+  // Documents
+  ingestDocument: (file, docId) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('doc_id', docId);
+
+    return fetch(`${API_BASE}/api/documents/ingest`, {
+      method: 'POST',
+      body: formData,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(error.detail || `Request failed: ${res.status}`);
+      }
+      return res.json();
+    });
+  },
+
+  consolidateDocuments: () => request('/api/documents/consolidate', { method: 'POST' }),
 };

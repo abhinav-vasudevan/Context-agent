@@ -120,13 +120,14 @@ class LLMClient:
         self,
         prompt: str,
         system: str = "",
+        disable_think: bool = False,
     ) -> str:
         """
         Generate a completion. Returns the full response text.
         Internally uses streaming to collect the full response.
         """
         chunks = []
-        async for chunk in self.generate_stream(prompt=prompt, system=system):
+        async for chunk in self.generate_stream(prompt=prompt, system=system, disable_think=disable_think):
             chunks.append(chunk)
         return "".join(chunks)
 
@@ -139,6 +140,7 @@ class LLMClient:
         on_token: Optional[Callable[[str], None]] = None,
         on_thinking: Optional[Callable[[str], None]] = None,
         stop: Optional[list[str]] = None,
+        disable_think: bool = False,
     ) -> AsyncIterator[str]:
         """
         Stream tokens from Ollama as they arrive.
@@ -156,7 +158,7 @@ class LLMClient:
         attempt = 0
         while True:
             try:
-                async for token in self._do_stream(prompt, system, on_token, on_thinking, stop, max_tokens_override=current_max_tokens):
+                async for token in self._do_stream(prompt, system, on_token, on_thinking, stop, max_tokens_override=current_max_tokens, disable_think=disable_think):
                     yield token
                 return  # Success — exit retry loop
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as e:
@@ -272,6 +274,7 @@ class LLMClient:
         on_thinking: Optional[Callable[[str], None]] = None,
         stop: Optional[list[str]] = None,
         max_tokens_override: Optional[int] = None,
+        disable_think: bool = False,
     ) -> AsyncIterator[str]:
         """Internal streaming implementation (single attempt)."""
         if self.use_groq:
@@ -469,7 +472,7 @@ class LLMClient:
             "options": options,
         }
         
-        if self.model not in self.__class__._thinking_unsupported_models:
+        if self.model not in self.__class__._thinking_unsupported_models and not disable_think:
             payload["think"] = True
 
         log.info(

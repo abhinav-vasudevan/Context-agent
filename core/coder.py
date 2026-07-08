@@ -268,7 +268,7 @@ class Coder:
         raw_output = re.sub(r'Thinking\.\.\..*?(?:\.\.\.done thinking\.|\Z)', '', raw_output, flags=re.DOTALL | re.IGNORECASE).strip()
 
         if file_path.endswith(".md") or file_path.endswith(".txt"):
-            match = re.search(r'^```(?:markdown|md|text)?\s*\n(.*?)(?:```|\Z)', raw_output.strip(), re.DOTALL | re.IGNORECASE)
+            match = re.search(r'^```(?:markdown|md|text)?\s*\n(.*?)(?:\n\s*```|\Z)', raw_output.strip(), re.DOTALL | re.IGNORECASE)
             if match:
                 return match.group(1).strip()
             return raw_output.strip()
@@ -276,25 +276,25 @@ class Coder:
         # Look for code blocks with backticks (```python, ```javascript, ```jsx, etc). Allow unclosed blocks (EOF).
         lang_hint = self._get_lang_hint(file_path)
         if lang_hint:
-            lang_blocks = re.findall(r'```' + lang_hint + r'\s*\n(.*?)(?:```|\Z)', raw_output, re.DOTALL | re.IGNORECASE)
+            lang_blocks = re.findall(r'```' + lang_hint + r'\s*\n(.*?)(?:\n\s*```|\Z)', raw_output, re.DOTALL | re.IGNORECASE)
             if lang_blocks:
                 return lang_blocks[-1].strip()
         # Generic: match any fenced code block
-        blocks_backticks = re.findall(r'```(?:python|py|javascript|js|jsx|typescript|ts|tsx|css|html|json|sh|bash)?\s*\n(.*?)(?:```|\Z)', raw_output, re.DOTALL | re.IGNORECASE)
+        blocks_backticks = re.findall(r'```(?:python|py|javascript|js|jsx|typescript|ts|tsx|css|html|json|sh|bash)?\s*\n(.*?)(?:\n\s*```|\Z)', raw_output, re.DOTALL | re.IGNORECASE)
         if blocks_backticks:
             return blocks_backticks[-1].strip()
 
         # Look for python code blocks with triple single quotes ('''python or python ''')
-        blocks_quotes = re.findall(r"'''(?:python|py)?\s*\n(.*?)(?:'''|\Z)", raw_output, re.DOTALL | re.IGNORECASE)
+        blocks_quotes = re.findall(r"'''(?:python|py)?\s*\n(.*?)(?:\n\s*'''|\Z)", raw_output, re.DOTALL | re.IGNORECASE)
         if not blocks_quotes:
             # Also catch `python '''` which Ollama sometimes does
-            blocks_quotes = re.findall(r"(?:python|py)?\s*'''\s*\n(.*?)(?:'''|\Z)", raw_output, re.DOTALL | re.IGNORECASE)
+            blocks_quotes = re.findall(r"(?:python|py)?\s*'''\s*\n(.*?)(?:\n\s*'''|\Z)", raw_output, re.DOTALL | re.IGNORECASE)
             
         if blocks_quotes:
             return blocks_quotes[-1].strip()
             
         # Fallback: try generic code blocks without newlines (sometimes just ``` code ```)
-        blocks_inline = re.findall(r'```(.*?)(?:```|\Z)', raw_output, re.DOTALL)
+        blocks_inline = re.findall(r'```(.*?)(?:\n\s*```|```|\Z)', raw_output, re.DOTALL)
         if blocks_inline:
             return blocks_inline[-1].strip()
             

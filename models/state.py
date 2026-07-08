@@ -17,6 +17,35 @@ from dataclasses import dataclass, field
 from models.hierarchy import EpicSpec
 
 
+@dataclass
+class UserDocument:
+    """Represents a large document uploaded by the user."""
+    id: str
+    file_path: str
+    filename: str
+    master_summary: str
+    chunk_count: int
+    
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "file_path": self.file_path,
+            "filename": self.filename,
+            "master_summary": self.master_summary,
+            "chunk_count": self.chunk_count,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "UserDocument":
+        return cls(
+            id=data.get("id", ""),
+            file_path=data.get("file_path", ""),
+            filename=data.get("filename", ""),
+            master_summary=data.get("master_summary", ""),
+            chunk_count=data.get("chunk_count", 0),
+        )
+
+
 class StepStatus(str, Enum):
     """Status of a single plan step."""
     PENDING = "pending"
@@ -118,6 +147,7 @@ class ProjectState:
     # Identity
     project_id: str = field(default_factory=lambda: f"proj_{uuid.uuid4().hex[:8]}")
     project_name: str = ""                     # user-provided name
+    project_mode: str = "build"                # build, ingest, or docs
 
     # Input
     original_prompt: str = ""
@@ -136,6 +166,10 @@ class ProjectState:
 
     # File Registry — the key to code stitching
     file_registry: List[FileEntry] = field(default_factory=list)
+
+    # User Documents — Master summaries of large context files
+    user_documents: List[UserDocument] = field(default_factory=list)
+    global_master_summary: str = ""
 
     # Progress
     current_step: int = 0                      # index into plan_steps
@@ -210,6 +244,7 @@ class ProjectState:
         return {
             "project_id": self.project_id,
             "project_name": self.project_name,
+            "project_mode": self.project_mode,
             "status": self.status,
             "current_step": self.current_step,
             "total_steps": len(self.plan_steps),
@@ -249,6 +284,8 @@ class ProjectState:
             "current_epic_id": self.current_epic_id,
             "project_entry_point": self.project_entry_point,
             "ingested_architecture_notes": self.ingested_architecture_notes,
+            "user_documents": [doc.to_dict() for doc in self.user_documents],
+            "global_master_summary": self.global_master_summary,
         }
 
     # ── Serialization ─────────────────────────────────────────────────
@@ -308,6 +345,7 @@ class ProjectState:
         return {
             "project_id": self.project_id,
             "project_name": self.project_name,
+            "project_mode": self.project_mode,
             "project_scale": self.project_scale,
             "project_entry_point": self.project_entry_point,
             "epic_queue": [e.to_dict() for e in self.epic_queue],
@@ -356,6 +394,8 @@ class ProjectState:
             "workspace_path": self.workspace_path,
             "venv_path": self.venv_path,
             "ingested_architecture_notes": self.ingested_architecture_notes,
+            "user_documents": [doc.to_dict() for doc in self.user_documents],
+            "global_master_summary": self.global_master_summary,
         }
 
     @classmethod
@@ -364,6 +404,7 @@ class ProjectState:
         state = cls()
         state.project_id = data.get("project_id", state.project_id)
         state.project_name = data.get("project_name", "")
+        state.project_mode = data.get("project_mode", "build")
         state.project_scale = data.get("project_scale", "medium")
         state.project_entry_point = data.get("project_entry_point", "")
         state.current_epic_id = data.get("current_epic_id")
@@ -389,6 +430,9 @@ class ProjectState:
         state.workspace_path = data.get("workspace_path", "")
         state.venv_path = data.get("venv_path", "")
         state.ingested_architecture_notes = data.get("ingested_architecture_notes", "")
+        state.global_master_summary = data.get("global_master_summary", "")
+
+        state.user_documents = [UserDocument.from_dict(doc) for doc in data.get("user_documents", [])]
 
         # Rebuild plan steps
         state.plan_steps = [
