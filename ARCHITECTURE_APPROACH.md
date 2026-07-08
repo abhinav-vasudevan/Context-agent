@@ -95,3 +95,25 @@ When a file is written:
 
 ### Conclusion
 By fusing a deterministic state machine (Orchestrator) with dynamic Graph RAG (Graphifyy/Neo4j), Semantic Vector Search (ChromaDB), and autonomous sandboxed self-healing, the Context Agent effectively breaks the LLM Context Window limitation, enabling infinite scaling of AI-generated enterprise software.
+
+---
+
+## Part 6: Legacy Systems & Massive Requirement Ingestion
+
+As the Context Agent matured, it encountered the final frontier of enterprise software engineering: **Existing Legacy Codebases and Massive Requirement Documents**. 
+
+### The Problem with "New Project Only" AI
+Most AI agents assume a clean slate (`mkdir new_project`). But real-world engineering happens in existing codebases with undocumented entry points and chaotic architectures. If an AI blindly generates code into an existing project, it overwrites critical logic, creating an isolated island of code that breaks everything else.
+
+### The Solution: The Understanding Agent & Dynamic Ingestion
+To tackle this, we implemented a sophisticated **Codebase Ingestion Pipeline** (`core/ingestion/`):
+1. **Repository Mapping**: Instead of starting from scratch, the user provides a path to an existing codebase. The `RepositoryIngester` sweeps the directory, instantly mapping the entire AST registry of the legacy code.
+2. **The Understanding Agent**: This agent doesn't write code. It acts as an investigative engineer. It traverses the AST map to deduce the exact architecture style (e.g., MVC, Microservices) and, crucially, identifies the true entry point of the application (`<entry_point>`).
+3. **Surgical Context Forcing**: When generating new features, the Context Engine now checks if the target file already exists. If it does, it dynamically injects the *exact existing source code* directly into the Coder's prompt with a strict order: **"You MUST use `<edit_file>`"**. The LLM is forced to surgically inject logic using exact `SEARCH/REPLACE` blocks rather than destructively overwriting the legacy files.
+
+### Map-Reduce Document Chunking (Document Ingestion)
+Similarly, users often upload 200-page Software Requirement Specification (SRS) PDFs. To prevent catastrophic prompt overflow before planning even begins, we introduced **Document RAG Operations**:
+- The `ChatAgent` incorporates a `RecursiveCharacterChunker` to split massive TXT, MD, and PDF documents into semantic 8,000-token chunks.
+- It executes a **Map-Reduce Summarization** workflow: individually querying each chunk against the user's prompt, aggregating the insights, and then feeding the compressed, ultra-dense master specification to the Hierarchical Planner.
+
+This completely shields the LLM's context window from raw document overflow while guaranteeing that every single requirement across a 200-page spec is respected during the architectural planning phase.

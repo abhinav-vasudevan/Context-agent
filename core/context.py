@@ -557,6 +557,18 @@ Output ONLY the one-sentence summary, nothing else."""
         parts.append(step_block)
         used += step_tokens
 
+        # 2.5 Existing File Content (PINNED if editing)
+        full_path = config.PROJECTS_DIR / self.state.project_name / step.file_path
+        if full_path.exists() and full_path.is_file():
+            try:
+                content = full_path.read_text(encoding="utf-8")
+                content_block = f"\n=== EXISTING FILE CONTENT ({step.file_path}) ===\n{content}\n=======================================\n\nCRITICAL: You MUST use <edit_file> to modify this file using exact SEARCH/REPLACE blocks. DO NOT use <write_file> to overwrite it!\n"
+                content_tokens = LLMClient.count_tokens(content_block)
+                parts.append(content_block)
+                used += content_tokens
+            except Exception as e:
+                log.warning(f"Could not read existing file for context: {e}")
+
         # 3. Architecture Blueprint (compressed if needed)
         arch = self.state.architecture_text
         if arch:
@@ -793,7 +805,14 @@ Output the COMPLETE updated entry point with the new import and usage added."""
         """Format the current step description for the LLM."""
         block = "YOUR TASK:\n"
         block += f"Title: {step.title}\n"
-        block += f"File to create: {step.file_path}\n"
+        
+        # Check if file exists to guide LLM between write_file and edit_file
+        full_path = config.PROJECTS_DIR / self.state.project_name / step.file_path
+        if full_path.exists() and full_path.is_file():
+            block += f"File to edit: {step.file_path} (FILE ALREADY EXISTS! You MUST use <edit_file> instead of <write_file>)\n"
+        else:
+            block += f"File to create: {step.file_path}\n"
+            
         block += f"Description:\n{step.description}\n"
 
         if step.depends_on:
