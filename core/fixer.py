@@ -40,20 +40,20 @@ def _strip_comments(text: str) -> str:
 def _fuzzy_find_in_content(search_text: str, content: str, threshold: float = 0.75) -> Optional[tuple]:
     """
     Find the best fuzzy match for search_text within content.
-    
+
     Returns (start_idx, end_idx) of the best match in content, or None if
     no match exceeds the threshold.
     """
     search_lines = search_text.splitlines()
     content_lines = content.splitlines()
     search_len = len(search_lines)
-    
+
     if search_len == 0 or len(content_lines) == 0:
         return None
-    
+
     best_ratio = 0.0
     best_start = -1
-    
+
     # Slide a window of search_len lines over the content
     for i in range(len(content_lines) - search_len + 1):
         window = "\n".join(content_lines[i:i + search_len])
@@ -61,13 +61,13 @@ def _fuzzy_find_in_content(search_text: str, content: str, threshold: float = 0.
         if ratio > best_ratio:
             best_ratio = ratio
             best_start = i
-    
+
     if best_ratio >= threshold and best_start >= 0:
         # Reconstruct the matched text from the actual content lines
         matched_text = "\n".join(content_lines[best_start:best_start + search_len])
         log.debug("Fuzzy match found (ratio=%.2f) at lines %d-%d", best_ratio, best_start, best_start + search_len)
         return (matched_text, best_ratio)
-    
+
     return None
 
 
@@ -161,11 +161,11 @@ class Fixer:
         # Track SEARCH/REPLACE failures per file to escalate to full rewrite
         search_fail_counts = {}
         MAX_SEARCH_FAILURES = 15
-        
+
         for iteration in range(max_iterations):
             log.info("Fixer: agent loop iteration %d/%d", iteration + 1, max_iterations)
             chunks = []
-            
+
             try:
                 async for chunk in self.llm.generate_stream(
                     prompt=current_prompt,
@@ -176,11 +176,11 @@ class Fixer:
                     chunks.append(chunk)
             except Exception as e:
                 return False, f"LLM Generation Error: {str(e)}", []
-                
+
             raw_output = "".join(chunks)
             if not raw_output.strip():
                 return False, "LLM returned empty output", []
-                
+
             # Extract think block for summary (legacy format — still useful if /api/generate)
             think_match = re.search(r'<think>(.*?)</think>', raw_output, re.DOTALL | re.IGNORECASE)
             think_alt_match = re.search(r'Thinking\.\.\.(.*?)\.\.\.done thinking\.', raw_output, re.DOTALL | re.IGNORECASE)
@@ -193,7 +193,7 @@ class Fixer:
 
             # Append assistant's response to prompt history
             current_prompt += f"\n\nASSISTANT:\n{raw_output}\n\n"
-            
+
             # Check for <view_file> tags
             has_view_file = False
             view_matches = list(re.finditer(r'<view_file>\s*(.*?)\s*</view_file>', raw_output, re.IGNORECASE))
@@ -204,11 +204,11 @@ class Fixer:
                     if fpath.startswith("/"):
                         fpath = fpath.lstrip("/")
                     full_path = self.workspace / fpath
-                    
+
                     if not self.runner.security.is_within_workspace(full_path, self.workspace):
                         system_reply += f"--- SECURITY BLOCKED: Path traversal attempt to {fpath} ---\n"
                         continue
-                        
+
                     if full_path.exists():
                         # Detect language for proper code fence
                         lang = 'python'
@@ -220,7 +220,7 @@ class Fixer:
                         system_reply += f"--- {fpath} ---\n```{lang}\n{full_path.read_text(encoding='utf-8')}\n```\n\n"
                     else:
                         system_reply += f"--- {fpath} ---\nFILE NOT FOUND\n\n"
-                
+
                 current_prompt += system_reply
                 has_view_file = True
 
@@ -243,10 +243,10 @@ class Fixer:
                     if result.stderr or result.error:
                         system_reply += f"STDERR/ERROR:\n{result.stderr or result.error}\n"
                     system_reply += "\n"
-                
+
                 current_prompt += system_reply
                 has_run_command = True
-                
+
             # Parse edit blocks (both new <edit_file> and legacy # FILE: format)
             file_edits = {}
             current_file = None
@@ -264,7 +264,7 @@ class Fixer:
                         file_edits[current_file] = []
                     state = "idle"
                     continue
-                    
+
                 # Handle legacy # FILE: format just in case
                 if line.startswith("# FILE:"):
                     current_file = line.replace("# FILE:", "").strip().strip(' `\'"')
@@ -272,12 +272,12 @@ class Fixer:
                         file_edits[current_file] = []
                     state = "idle"
                     continue
-                
+
                 if line.strip().lower() == "</edit_file>":
                     current_file = None
                     state = "idle"
                     continue
-                
+
                 if current_file:
                     if line.strip() == "<<<<<<< SEARCH":
                         state = "search"
@@ -295,7 +295,7 @@ class Fixer:
                             })
                         state = "idle"
                         continue
-                    
+
                     if state == "search":
                         search_block.append(line)
                     elif state == "replace":
@@ -313,61 +313,61 @@ class Fixer:
                 else:
                     if "<done>" in raw_output.lower():
                         break
-                        
+
                     if has_view_file or has_run_command:
                         log.info("Fixer: agent used tools, continuing loop")
                         continue
-                    
+
                     current_prompt += "SYSTEM:\nYou did not use <view_file>, <edit_file>, <run_command>, or <done>. Please output valid XML tags to proceed.\n\n"
                     log.info("Fixer: agent outputted invalid tags, looping back")
                     continue
-                    
+
             # Apply all fixes with fuzzy matching and retry tracking
             edit_success = True
             for fpath, edits in file_edits.items():
                 fpath = _normalize_path(fpath)
                 if fpath.startswith("/"):
                     fpath = fpath.lstrip("/")
-                
+
                 full_fpath = self.workspace / fpath
-                
+
                 if not self.runner.security.is_within_workspace(full_fpath, self.workspace):
                     current_prompt += f"SYSTEM:\nSECURITY BLOCKED: Path traversal attempt to {fpath}\n\n"
                     edit_success = False
                     break
-                    
+
                 if not full_fpath.exists():
                     current_prompt += f"SYSTEM:\nTarget file does not exist: {fpath}. Make sure the path is correct.\n\n"
                     edit_success = False
                     break
-                
+
                 content = full_fpath.read_text(encoding="utf-8")
-                
+
                 # Apply edits sequentially
                 for i, edit in enumerate(edits):
                     search_text = edit["search"]
                     replace_text = edit["replace"]
-                    
+
                     if search_text == "FULL_FILE_REPLACE":
                         content = replace_text
                         log.info("Fixer: full file rewrite applied for %s", fpath)
                         continue
-                    
+
                     # === Multi-level matching strategy ===
                     matched = False
-                    
+
                     # Level 1: Exact match
                     if search_text in content:
                         content = content.replace(search_text, replace_text, 1)
                         matched = True
                         log.info("Fixer: exact SEARCH match in %s", fpath)
-                    
+
                     # Level 2: Stripped whitespace match
                     if not matched and search_text.strip() in content:
                         content = content.replace(search_text.strip(), replace_text.strip(), 1)
                         matched = True
                         log.info("Fixer: stripped whitespace SEARCH match in %s", fpath)
-                    
+
                     # Level 3: Comment-stripped match
                     if not matched:
                         stripped_search = _strip_comments(search_text)
@@ -377,7 +377,7 @@ class Fixer:
                             search_lines_clean = stripped_search.strip().splitlines()
                             content_lines = content.splitlines()
                             content_lines_clean = stripped_content.splitlines()
-                            
+
                             for idx in range(len(content_lines_clean) - len(search_lines_clean) + 1):
                                 window = content_lines_clean[idx:idx + len(search_lines_clean)]
                                 if "\n".join(window) == stripped_search.strip():
@@ -387,7 +387,7 @@ class Fixer:
                                     matched = True
                                     log.info("Fixer: comment-stripped SEARCH match in %s (line %d)", fpath, idx)
                                     break
-                    
+
                     # Level 4: Fuzzy match using difflib
                     if not matched:
                         fuzzy_result = _fuzzy_find_in_content(search_text, content)
@@ -396,7 +396,7 @@ class Fixer:
                             content = content.replace(actual_text, replace_text, 1)
                             matched = True
                             log.info("Fixer: fuzzy SEARCH match in %s (ratio=%.2f)", fpath, ratio)
-                    
+
                     # If no match at any level — track failure
                     if not matched:
                         search_fail_counts[fpath] = search_fail_counts.get(fpath, 0) + 1
@@ -405,7 +405,7 @@ class Fixer:
                             "Fixer: SEARCH/REPLACE failed for %s (failure %d/%d)",
                             fpath, fail_count, MAX_SEARCH_FAILURES
                         )
-                        
+
                         if fail_count >= MAX_SEARCH_FAILURES:
                             # Detect the language hint for the file
                             lang = 'python'
@@ -443,9 +443,9 @@ class Fixer:
                     log.info("Fixer: applied edit to %s", fpath)
                     if fpath not in fixed_files_list:
                         fixed_files_list.append(fpath)
-                        
+
                     current_prompt += f"SYSTEM:\nSuccessfully applied edits to {fpath}.\n\n"
-                    
+
                     # Syntax check
                     if fpath.endswith(".py"):
                         syntax_result = await self.runner.syntax_check(fpath)
@@ -453,23 +453,23 @@ class Fixer:
                             current_prompt += f"SYSTEM:\nFix introduced Syntax Error in {fpath}:\n{syntax_result.error}\nPlease fix the syntax error.\n\n"
                             edit_success = False
                             break
-                            
+
                     # Update registry
                     entry = FileRegistryBuilder.parse_file(full_fpath, fpath)
                     if entry:
                         self.coder._update_registry(entry)
-                        
+
             if not edit_success:
                 log.info("Fixer: edit failed or syntax error, looping back")
                 continue
-                
+
             # If edits succeeded and it output <done>, break
             if "<done>" in raw_output.lower():
                 break
             else:
                 log.info("Fixer: edits succeeded but no <done> found, looping back")
                 continue
-                
+
         # 8. Record in fix history
         self.state.fix_history.append({
             "error_message": error_text,

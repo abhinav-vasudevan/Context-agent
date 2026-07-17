@@ -21,7 +21,7 @@ class IncrementalVerifier:
     def __init__(self, workspace: Path, venv_path: Optional[Path] = None):
         self.workspace = workspace
         self.venv_path = venv_path
-        
+
     def _get_tool_cmd(self, tool: str) -> str:
         """Get path to a tool (ruff or pyright) in the venv, if it exists."""
         if self.venv_path and self.venv_path.exists():
@@ -41,19 +41,19 @@ class IncrementalVerifier:
         full_path = self.workspace / file_path
         if not full_path.exists():
             return False, f"File not found: {file_path}"
-            
+
         # 1. Run Ruff (Linter)
         ruff_res = await self._run_ruff(str(full_path))
         if not ruff_res.success:
             return False, f"Ruff Lint Errors:\n{chr(10).join(ruff_res.errors)}"
-            
+
         # 2. Run Pyright (Type Checker)
         pyright_res = await self._run_pyright(str(full_path))
         if not pyright_res.success:
             return False, f"Pyright Type Errors:\n{chr(10).join(pyright_res.errors)}"
-            
+
         return True, ""
-        
+
     async def _run_ruff(self, target_path: str) -> VerificationResult:
         cmd = [self._get_tool_cmd("ruff"), "check", target_path]
         try:
@@ -64,10 +64,10 @@ class IncrementalVerifier:
                 cwd=str(self.workspace)
             )
             stdout, stderr = await process.communicate()
-            
+
             if process.returncode == 0:
                 return VerificationResult(True, [], "ruff")
-                
+
             out_str = stdout.decode("utf-8", errors="replace").strip()
             # Basic cleanup of Ruff output
             errors = [line for line in out_str.split("\n") if line.strip() and not line.startswith("Found")]
@@ -90,15 +90,15 @@ class IncrementalVerifier:
                 cwd=str(self.workspace)
             )
             stdout, stderr = await process.communicate()
-            
+
             if process.returncode == 0:
                 return VerificationResult(True, [], "pyright")
-                
+
             out_str = stdout.decode("utf-8", errors="replace").strip()
             errors = [line for line in out_str.split("\n") if "error:" in line.lower()]
             if not errors:
                 errors = [out_str]
-                
+
             return VerificationResult(False, errors, "pyright")
         except FileNotFoundError:
             log.warning("Pyright not found. Skipping type checking.")

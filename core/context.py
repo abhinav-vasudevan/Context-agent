@@ -125,7 +125,7 @@ class FileRegistryBuilder:
                 elif isinstance(node.func, ast.Attribute):
                     self.calls.add(node.func.attr)
                 self.generic_visit(node)
-                
+
         visitor = CallVisitor()
         visitor.visit(tree)
         entry.calls = sorted(list(visitor.calls))
@@ -299,7 +299,7 @@ ABSOLUTE RULES — violating ANY means failure:
     ARCHITECT_SYSTEM_PROMPT = """You are an elite Software Architect.
 Your job is to read a user's prompt and output a MASSIVE, highly detailed architectural blueprint (`architecture.md`).
 You MUST use deep Chain-of-Thought reasoning to organically deduce the full scale of the system.
-If the user asks for a simple script, design a simple script. 
+If the user asks for a simple script, design a simple script.
 If the user asks for an Operating System, an AI Agent, or a complex application, you MUST deduce the massive, multi-module architecture required to make it production-ready. Do NOT be lazy. Output thousands of words if necessary. Your blueprint must be EXHAUSTIVE.
 
 MANDATORY SECTIONS:
@@ -438,7 +438,7 @@ Format inside the tag:
 `</edit_file>`
 
 3. `<run_command>`
-Use this to run terminal commands (e.g., `pytest`, `python main.py`, `pip install x`) securely within the project sandbox to verify your fixes. 
+Use this to run terminal commands (e.g., `pytest`, `python main.py`, `pip install x`) securely within the project sandbox to verify your fixes.
 Format inside the tag: `<run_command>pytest test_api.py</run_command>`. The system will reply with stdout/stderr.
 
 4. `<done>`
@@ -488,13 +488,13 @@ Output ONLY the one-sentence summary, nothing else."""
         self.knowledge = ""
         self.custom_rules = ""
         self.brain = None
-        
+
         try:
             from core.brain.project_brain import ProjectBrain
             self.brain = ProjectBrain(config.PROJECT_ROOT)
         except Exception as e:
             log.warning("Failed to initialize ProjectBrain: %s", e)
-            
+
         try:
             # Load OKF Markdown files
             knowledge_dir = config.PROJECT_ROOT / ".agent_brain" / "knowledge"
@@ -504,7 +504,7 @@ Output ONLY the one-sentence summary, nothing else."""
                     content = md_file.read_text(encoding="utf-8").strip()
                     if content:
                         okf_texts.append(f"--- Rule from {md_file.name} ---\n{content}\n")
-                
+
                 if okf_texts:
                     self.custom_rules = "\n\n=== STRICT PROJECT RULES (OKF) ===\nYou MUST follow these rules exactly on every request:\n\n" + "\n".join(okf_texts) + "\n====================================\n"
         except Exception as e:
@@ -523,7 +523,7 @@ Output ONLY the one-sentence summary, nothing else."""
 
         # 1. File Registry (PINNED — always included in full)
         registry_str = self.state.get_file_registry_string()
-        
+
         # Phase 3: Use Graphifyy/Neo4j graph to filter registry if possible
         if self.brain and getattr(self.brain, "graph", None) and self.brain.graph.is_available:
             try:
@@ -546,7 +546,7 @@ Output ONLY the one-sentence summary, nothing else."""
                         log.info("Successfully filtered registry using Graphifyy Neo4j data.")
             except Exception as e:
                 log.warning("Failed to filter registry using Graphifyy: %s", e)
-        
+
         registry_tokens = LLMClient.count_tokens(registry_str)
         parts.append(registry_str)
         used += registry_tokens
@@ -604,14 +604,14 @@ Output ONLY the one-sentence summary, nothing else."""
             # Use step description and title as the query
             query = f"{step.title} {step.description}"
             chunks = self.brain.semantic.query_document_chunks(query, n_results=3, doc_ids=doc_ids)
-            
+
             if chunks:
                 doc_context = "\n=== RELEVANT DOCUMENT CONTEXT (RAG) ===\n"
                 for chunk in chunks:
                     source = chunk.get("source_file", "Unknown")
                     content = chunk.get("document", "")
                     doc_context += f"--- Source: {source} ---\n{content}\n\n"
-                
+
                 doc_tokens = LLMClient.count_tokens(doc_context)
                 remaining = budget - used - config.MIN_GENERATION_BUDGET
                 if doc_tokens <= remaining:
@@ -672,7 +672,7 @@ Output ONLY the one-sentence summary, nothing else."""
                         registry_str = "FILE REGISTRY (Graph-Filtered):\n" + "=" * 45 + "\n" + "\n\n".join(filtered_registry)
             except Exception as e:
                 log.warning("Failed to filter registry for fixer using Graphifyy: %s", e)
-                
+
         parts.append(registry_str)
 
         # The broken file
@@ -805,14 +805,14 @@ Output the COMPLETE updated entry point with the new import and usage added."""
         """Format the current step description for the LLM."""
         block = "YOUR TASK:\n"
         block += f"Title: {step.title}\n"
-        
+
         # Check if file exists to guide LLM between write_file and edit_file
         full_path = config.PROJECTS_DIR / self.state.project_name / step.file_path
         if full_path.exists() and full_path.is_file():
             block += f"File to edit: {step.file_path} (FILE ALREADY EXISTS! You MUST use <edit_file> instead of <write_file>)\n"
         else:
             block += f"File to create: {step.file_path}\n"
-            
+
         block += f"Description:\n{step.description}\n"
 
         if step.depends_on:

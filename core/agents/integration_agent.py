@@ -57,29 +57,29 @@ Output ONLY the JSON object. No markdown. No explanation."""
     ) -> Tuple[bool, str]:
         """
         Verify the generated code against known interfaces.
-        
+
         Returns:
             (is_integrated, fix_instructions)
         """
         # Get the context the coder used (this includes the dependency interfaces)
         context = self.brain.get_context_for_file(file_path)
-        
+
         # We only care about direct dependencies for integration checking
         dep_chain = context.get("dependency_chain", [])
-        
+
         if not dep_chain:
             # No internal dependencies to verify against
             return True, ""
-            
+
         # Format the interfaces of the dependencies
         interfaces = []
         for dep in dep_chain[:5]:  # Just check direct dependencies to save tokens
             # Query the graph for methods/classes (mocked for now, assumes AST registry provides this in real system)
             # In a full v2, we'd query the AST registry here
             interfaces.append(f"Dependency: {dep} (interface verification active)")
-            
+
         interface_text = "\n".join(interfaces)
-        
+
         prompt = f"""NEW FILE: {file_path}
 
 === NEW CODE ===
@@ -93,14 +93,14 @@ Output ONLY the JSON object. No markdown. No explanation."""
 Analyze the integration now."""
 
         raw_output = await self.llm.generate(prompt=prompt, system=self.SYSTEM_PROMPT)
-        
+
         return self._parse_result(raw_output)
 
     def _parse_result(self, raw_output: str) -> Tuple[bool, str]:
         """Parse LLM output into (is_integrated, instructions)."""
         # Strip think blocks
         cleaned = re.sub(r'<think>.*?</think>', '', raw_output, flags=re.DOTALL)
-        
+
         # Extract JSON
         json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', cleaned, re.DOTALL)
         if json_match:

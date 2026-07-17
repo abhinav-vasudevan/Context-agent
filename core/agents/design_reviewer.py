@@ -53,27 +53,27 @@ Output ONLY the JSON object. No markdown. No explanation."""
     async def review_architecture(self, arch: ArchitectureSpec) -> Tuple[bool, str]:
         """
         Review the architecture spec.
-        
+
         Returns:
             (is_approved, review_report)
         """
         log.info("DesignReviewer: analyzing architecture %s", arch.name)
-        
+
         # Format the architecture for review
         arch_dict = arch.to_dict()
         arch_text = json.dumps(arch_dict, indent=2)
-        
+
         prompt = f"=== ARCHITECTURE DESIGN ===\n{arch_text}\n\nReview this architecture now."
 
         raw_output = await self.llm.generate(prompt=prompt, system=self.SYSTEM_PROMPT)
-        
+
         return self._parse_result(raw_output)
 
     def _parse_result(self, raw_output: str) -> Tuple[bool, str]:
         """Parse LLM output into (is_approved, report)."""
         # Strip think blocks
         cleaned = re.sub(r'<think>.*?</think>', '', raw_output, flags=re.DOTALL)
-        
+
         # Extract JSON
         json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', cleaned, re.DOTALL)
         if json_match:
@@ -88,23 +88,23 @@ Output ONLY the JSON object. No markdown. No explanation."""
         try:
             data = json.loads(cleaned)
             is_approved = data.get("is_approved", True)
-            
+
             report_lines = []
             if data.get("critique"):
                 report_lines.append(f"Assessment: {data['critique']}")
-            
+
             if data.get("flaws"):
                 report_lines.append("\nIdentified Flaws:")
                 for flaw in data["flaws"]:
                     report_lines.append(f"  - {flaw}")
-                    
+
             if data.get("suggestions"):
                 report_lines.append("\nSuggestions:")
                 for sug in data["suggestions"]:
                     report_lines.append(f"  - {sug}")
-                    
+
             return is_approved, "\n".join(report_lines)
-            
+
         except json.JSONDecodeError as e:
             log.warning("DesignReviewer failed to parse JSON: %s", e)
             return True, "Auto-approved (JSON parse error during review)."

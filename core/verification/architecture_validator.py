@@ -56,7 +56,7 @@ class ArchitectureValidator:
         owning_subsystem_info = self.brain.graph.get_subsystem_for_file(file_path)
         if not owning_subsystem_info:
             return True, []
-            
+
         owning_subsystem_name = owning_subsystem_info.get("name")
 
         violations = []
@@ -65,14 +65,14 @@ class ArchitectureValidator:
             target_subsystem_info = self.brain.graph.get_subsystem_for_file(imp_path)
             if not target_subsystem_info:
                 continue
-                
+
             target_subsystem_name = target_subsystem_info.get("name")
-            
+
             # If importing from a different subsystem, check if it's an allowed dependency
             if target_subsystem_name and target_subsystem_name != owning_subsystem_name:
                 # In a full graph query, we'd check:
                 # MATCH (a:Subsystem {name: owning})-[r:DEPENDS_ON]->(b:Subsystem {name: target})
-                
+
                 # For this implementation, we simply warn if boundaries are crossed
                 # (The LLM integration agent will review these warnings)
                 violations.append(
@@ -83,5 +83,5 @@ class ArchitectureValidator:
         if violations:
             log.warning("Architecture violations found in %s: %s", file_path, violations)
             return False, violations
-            
+
         return True, []

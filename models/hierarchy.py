@@ -33,10 +33,10 @@ class NodeStatus(str, Enum):
 class ArchitectureDecisionRecord:
     """
     An Architectural Decision Record (ADR).
-    
+
     Stores the *why* behind design choices so that future LLM generations
     can understand decisions made weeks or months ago without re-deriving them.
-    
+
     Example:
         ADR #3: Use JWT for authentication
         Context: Need stateless auth for microservices
@@ -79,10 +79,10 @@ class ArchitectureDecisionRecord:
 class SemanticSummary:
     """
     Semantic summary of a code file, class, or function.
-    
+
     Stored in ChromaDB for vector similarity retrieval.
     Unlike the AST registry (which stores *structure*), this stores *meaning*.
-    
+
     Example:
         file: "src/dns_resolver.py"
         purpose: "Resolves hostnames to IP addresses using iterative DNS queries"
@@ -141,7 +141,7 @@ class SemanticSummary:
 class ModuleSpec:
     """
     Level 4: A specific module/file to be generated.
-    
+
     Example: "src/packet_filter.py" within the Firewall service.
     """
     id: str = field(default_factory=lambda: f"mod_{uuid.uuid4().hex[:8]}")
@@ -171,7 +171,7 @@ class ModuleSpec:
 class ServiceSpec:
     """
     Level 3: A logical service that owns multiple modules.
-    
+
     Example: "Firewall" service containing rule_engine.py, packet_filter.py, policy_manager.py.
     """
     id: str = field(default_factory=lambda: f"svc_{uuid.uuid4().hex[:8]}")
@@ -205,7 +205,7 @@ class ServiceSpec:
 class SubsystemSpec:
     """
     Level 2: A major subsystem within the architecture.
-    
+
     Example: "Networking" subsystem containing TCP, UDP, DNS, Routing, Firewall services.
     """
     id: str = field(default_factory=lambda: f"sub_{uuid.uuid4().hex[:8]}")
@@ -249,7 +249,7 @@ class ProjectScale(str, Enum):
 class EpicSpec:
     """
     V3 Epic — a Bounded Domain that is planned and built as a self-contained unit.
-    
+
     Epics are the core unit of JIT (Just-In-Time) planning. The Master Planner
     generates Epics first (high-level bounded domains with public API contracts),
     then the Orchestrator plans and executes them one at a time.
@@ -294,7 +294,7 @@ class EpicSpec:
 class ArchitectureSpec:
     """
     Level 1: The overall system architecture.
-    
+
     This is the root of the hierarchical plan. It owns all subsystems and ADRs.
     """
     id: str = field(default_factory=lambda: f"arch_{uuid.uuid4().hex[:8]}")

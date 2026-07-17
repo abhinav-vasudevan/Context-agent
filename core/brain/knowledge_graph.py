@@ -130,11 +130,11 @@ class KnowledgeGraph:
     def add_node(self, label: str, properties: Dict[str, Any]) -> Optional[str]:
         """
         Create or merge a node with the given label and properties.
-        
+
         Args:
             label: Node type (Project, Subsystem, Service, Module, File, Class, Function)
             properties: Dict of node properties (must include 'name' or 'path')
-            
+
         Returns:
             The node's identifier (name or path), or None on failure.
         """
@@ -167,7 +167,7 @@ class KnowledgeGraph:
     ) -> bool:
         """
         Create a directed edge between two nodes.
-        
+
         Args:
             from_label: Source node type
             from_key: Source node name/path
@@ -175,7 +175,7 @@ class KnowledgeGraph:
             to_key: Target node name/path
             edge_type: Relationship type (OWNS, USES, DEPENDS_ON, etc.)
             properties: Optional edge properties
-            
+
         Returns:
             True if edge was created successfully.
         """
@@ -207,14 +207,14 @@ class KnowledgeGraph:
     def get_related_files(self, file_path: str, depth: int = 2) -> List[Dict[str, Any]]:
         """
         Find all files related to the given file within N hops.
-        
+
         This is the core query for context retrieval — it answers
         "What other files does file X depend on or is depended on by?"
-        
+
         Args:
             file_path: The relative path of the file
             depth: Maximum number of hops to traverse
-            
+
         Returns:
             List of dicts with file info and relationship paths
         """
@@ -278,7 +278,7 @@ class KnowledgeGraph:
     def get_impact_analysis(self, file_path: str) -> Dict[str, List[str]]:
         """
         Change Impact Analysis: determine what is affected if this file changes.
-        
+
         Returns:
             Dict with keys: affected_files, affected_services, affected_subsystems, affected_tests
         """
@@ -322,7 +322,7 @@ class KnowledgeGraph:
     def get_architecture_overview(self) -> List[Dict[str, Any]]:
         """
         Get a high-level overview of the entire project architecture.
-        
+
         Returns a list of subsystems with their services and file counts.
         Used to build the architecture context for the LLM prompt.
         """
@@ -347,7 +347,7 @@ class KnowledgeGraph:
         """Get raw nodes and links for visualization. If project_name is provided, filters to that project."""
         if not self._driver:
             return {"nodes": [], "links": []}
-            
+
         nodes = []
         links = []
         with self._driver.session(database=self.database) as session:
@@ -357,7 +357,7 @@ class KnowledgeGraph:
                 n_result = session.run(n_query, name=project_name)
             else:
                 n_result = session.run("MATCH (n) RETURN elementId(n) as node_id, labels(n) as labels, properties(n) as props")
-                
+
             for record in n_result:
                 props = record["props"]
                 node_name = props.get("name", props.get("path", str(record["node_id"])))
@@ -366,7 +366,7 @@ class KnowledgeGraph:
                     "labels": record["labels"],
                     "properties": props
                 })
-                
+
             # Get edges
             if project_name:
                 e_query = """
@@ -378,7 +378,7 @@ class KnowledgeGraph:
                 e_result = session.run(e_query, name=project_name)
             else:
                 e_result = session.run("MATCH (a)-[r]->(b) RETURN properties(a) as a_props, type(r) as type, properties(b) as b_props, elementId(a) as aid, elementId(b) as bid")
-                
+
             for record in e_result:
                 a_props = record["a_props"]
                 b_props = record["b_props"]
@@ -389,5 +389,5 @@ class KnowledgeGraph:
                     "target": target_id,
                     "type": record["type"]
                 })
-                
+
         return {"nodes": nodes, "links": links}

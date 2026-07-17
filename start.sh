@@ -4,7 +4,7 @@ echo "Starting Context Agent..."
 
 # Start FastAPI Backend in background
 echo "Starting FastAPI Backend..."
-python3.11 main.py &
+python3 main.py &
 BACKEND_PID=$!
 
 # Start React Frontend in background

@@ -83,7 +83,7 @@ class QAAgent:
                 cmd = ["bash", main_file]
             else:
                 cmd = [python_cmd, "-u", main_file]
-                
+
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdin=asyncio.subprocess.PIPE,

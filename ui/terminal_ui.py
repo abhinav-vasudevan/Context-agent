@@ -97,7 +97,7 @@ class TerminalUI:
             self.content = ""
             self.live = None
             self.panel = None
-            
+
         def __enter__(self):
             self.panel = Panel("", title=f"[bold white]{self.title}[/]", border_style="bright_black")
             self.live = Live(self.panel, refresh_per_second=10, console=console)
@@ -109,7 +109,7 @@ class TerminalUI:
             # Update panel content. Rich can handle basic formatting.
             if self.panel:
                 self.panel.renderable = self.content
-            
+
         def __exit__(self, exc_type, exc_val, exc_tb):
             if self.live:
                 self.live.stop()
@@ -142,7 +142,7 @@ class TerminalUI:
                 StepStatus.FAILED: "✗",
                 StepStatus.SKIPPED: "⊘",
             }.get(step.status, "?")
-            
+
             table.add_row(
                 str(step.step_number),
                 status_char,
@@ -162,7 +162,7 @@ class TerminalUI:
             title="[bold white]Current File Registry (Agent Context)[/]",
             border_style="bright_black"
         ))
-        
+
     def show_error(self, file_path: str, error_text: str):
         """Display a runtime or syntax error."""
         console.print(Panel(

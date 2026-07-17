@@ -14,11 +14,11 @@ log = logging.getLogger(__name__)
 class RepositoryIngester:
     """
     Ingests an existing codebase into the Project Brain (Phase 7).
-    
+
     1. Extracts AST and graph relationships using Graphifyy.
     2. Runs deep semantic analysis on every file to populate ChromaDB.
     """
-    
+
     def __init__(self, workspace: Path, brain: ProjectBrain, summarizer: SummarizerAgent, understanding_agent: Optional[UnderstandingAgent] = None, state: Optional[ProjectState] = None):
         self.workspace = workspace
         self.brain = brain
@@ -36,7 +36,7 @@ class RepositoryIngester:
         """
         if on_status:
             on_status("Starting AST Knowledge Graph extraction...")
-            
+
         # 1. Extract AST and relationships into Neo4j
         try:
             self.brain.update_graphify_knowledge()
@@ -60,10 +60,10 @@ class RepositoryIngester:
             ".pytest_cache", ".mypy_cache"
         }
         paths = [
-            p for p in paths 
+            p for p in paths
             if not any(part in ignored_dirs or (part.startswith('.') and part != '.agent_brain') for part in p.parts)
         ]
-        
+
         total_files = len(paths)
         if total_files == 0:
             if on_status:
@@ -72,22 +72,22 @@ class RepositoryIngester:
 
         # 3. Summarize each file and store in ChromaDB (Concurrent)
         sem = asyncio.Semaphore(10)
-        
+
         completed_count = 0
-        
+
         async def process_file(i: int, path: Path):
             nonlocal completed_count
             rel_path = str(path.relative_to(self.workspace)).replace("\\", "/")
-                
+
             async with sem:
                 try:
                     content = path.read_text(encoding="utf-8")
                     summary = await self.summarizer.summarize_file(rel_path, content)
-                    
+
                     if summary:
                         # We don't have subsystem/service info for raw codebases, so we leave them empty
                         self.brain.store_file_summary(summary, subsystem="", service="")
-                        
+
                     if self.state:
                         # Parse AST and add to File Registry so the Planner can see it
                         if path.suffix == '.py':
@@ -96,10 +96,10 @@ class RepositoryIngester:
                                 self.state.file_registry.append(entry)
                         else:
                             self.state.file_registry.append(FileEntry(path=rel_path))
-                            
+
                 except Exception as e:
                     log.warning(f"Failed to summarize {rel_path}: {e}")
-                
+
                 completed_count += 1
                 if on_progress:
                     on_progress(completed_count, total_files, rel_path)
@@ -110,7 +110,7 @@ class RepositoryIngester:
 
         if on_progress:
             on_progress(total_files, total_files, "Complete")
-            
+
         # 4. Synthesize overall architecture
         if self.understanding_agent:
             if on_status:
@@ -126,8 +126,8 @@ class RepositoryIngester:
                     self.state.project_entry_point = entry_point
             except Exception as e:
                 log.warning(f"Understanding phase failed: {e}")
-            
+
         if on_status:
             on_status(f"Successfully ingested {total_files} files into Project Brain.")
-            
+
         return True

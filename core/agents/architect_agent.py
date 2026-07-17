@@ -13,7 +13,7 @@ class ArchitectAgent:
     Generates strict stub files (skeletons) for all modules in a sprint BEFORE implementation.
     This entirely eliminates "Code Stitching" errors by establishing the API boundaries upfront.
     """
-    
+
     SYSTEM_PROMPT = """You are a Principal Software Architect.
 Your task is to generate strict Contract-First stub files for the provided list of modules.
 
@@ -41,7 +41,7 @@ DO NOT use <think> tags. DO NOT output markdown outside the JSON.
         self.llm = llm
 
     async def generate_stubs(
-        self, 
+        self,
         sprint_modules: List[ModuleSpec],
         on_token: Optional[Callable] = None,
         on_thinking: Optional[Callable] = None
@@ -54,7 +54,7 @@ DO NOT use <think> tags. DO NOT output markdown outside the JSON.
             return {}
 
         log.info(f"ArchitectAgent: Generating stubs for {len(sprint_modules)} modules")
-        
+
         # Build prompt
         module_descriptions = []
         for mod in sprint_modules:
@@ -62,9 +62,9 @@ DO NOT use <think> tags. DO NOT output markdown outside the JSON.
             if mod.exports:
                 desc += f"\n  Expected Exports: {', '.join(mod.exports)}"
             module_descriptions.append(desc)
-            
+
         user_prompt = "Generate stubs for the following modules:\n\n" + "\n\n".join(module_descriptions)
-        
+
         chunks = []
         async for chunk in self.llm.generate_stream(
             prompt=user_prompt,
@@ -75,14 +75,14 @@ DO NOT use <think> tags. DO NOT output markdown outside the JSON.
             chunks.append(chunk)
 
         raw_output = "".join(chunks)
-        
+
         # Parse JSON
         cleaned = re.sub(r'<think>.*?</think>', '', raw_output, flags=re.DOTALL)
         cleaned = re.sub(r'Thinking\.\.\..*?\.\.\.done thinking\.', '', cleaned, flags=re.DOTALL)
         json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', cleaned, re.DOTALL)
         if json_match:
             cleaned = json_match.group(1)
-            
+
         cleaned = cleaned.strip()
         start = cleaned.find('{')
         end = cleaned.rfind('}')

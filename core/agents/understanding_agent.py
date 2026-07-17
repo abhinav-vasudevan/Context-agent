@@ -38,7 +38,7 @@ CRITICAL INSTRUCTIONS:
         Analyze the graph and semantic summaries, and generate a markdown architecture map and the entry point.
         """
         log.info("UnderstandingAgent: Generating codebase architecture map")
-        
+
         # 1. Fetch file list and basic relationships from Neo4j
         files_data = []
         if self.brain.graph and self.brain.graph.is_available:
@@ -66,12 +66,12 @@ CRITICAL INSTRUCTIONS:
         for file_info in files_data:
             path = file_info["path"]
             symbols = file_info["symbols"]
-            
+
             # Try to get semantic summary
             summary = ""
             if self.brain.semantic and self.brain.semantic.is_available:
                 summary = self.brain.semantic.get_file_summary(path)
-            
+
             desc = f"### File: {path}\n"
             if symbols:
                 desc += f"- Key Symbols (Classes/Functions): {', '.join(symbols[:20])}\n"
@@ -81,7 +81,7 @@ CRITICAL INSTRUCTIONS:
 
         prompt = "Here is the raw data from the codebase ingestion. Please generate the detailed Architecture Map.\n\n"
         prompt += "\n\n".join(file_descriptions)
-        
+
         chunks = []
         async for chunk in self.llm.generate_stream(
             prompt=prompt,
@@ -92,11 +92,11 @@ CRITICAL INSTRUCTIONS:
             chunks.append(chunk)
 
         raw_output = "".join(chunks)
-        
+
         # Clean up think tags if they leaked
         cleaned = re.sub(r'<think>.*?</think>', '', raw_output, flags=re.DOTALL)
         cleaned = re.sub(r'Thinking\.\.\..*?\.\.\.done thinking\.', '', cleaned, flags=re.DOTALL)
-        
+
         # Extract entry point
         entry_point = ""
         match = re.search(r'<entry_point>(.*?)</entry_point>', cleaned, re.IGNORECASE | re.DOTALL)
@@ -104,5 +104,5 @@ CRITICAL INSTRUCTIONS:
             entry_point = match.group(1).strip()
             # Remove the tag from the final markdown notes
             cleaned = re.sub(r'<entry_point>.*?</entry_point>', '', cleaned, flags=re.IGNORECASE | re.DOTALL)
-        
+
         return cleaned.strip(), entry_point

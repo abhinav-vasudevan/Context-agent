@@ -36,3 +36,9 @@ ehthumbs.db
 # User projects are created at runtime — don't track them
 projects/*/
 !projects/.gitkeep
+
+# ── Runtime Artifacts ────────────────────────────────────────────────
+.agent_brain/
+graphify-out/
+*.log
+server.log

@@ -202,7 +202,7 @@ class SemanticStore:
         collection = self._get_or_create_collection(self.FILES_COLLECTION)
         if not collection:
             return ""
-        
+
         try:
             results = collection.get(
                 where={"file_path": file_path},

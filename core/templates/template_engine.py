@@ -17,9 +17,9 @@ class TemplateEngine:
             self.templates_dir = Path(__file__).parent / "files"
         else:
             self.templates_dir = templates_dir
-            
+
         self.templates_dir.mkdir(parents=True, exist_ok=True)
-        
+
         self.env = jinja2.Environment(
             loader=jinja2.FileSystemLoader(str(self.templates_dir)),
             autoescape=False,
@@ -34,14 +34,14 @@ class TemplateEngine:
         """
         path = Path(file_path)
         name = path.name.lower()
-        
+
         if name.endswith("_model.py") or name == "models.py":
             return "model.py.j2"
         elif name.endswith("_service.py") or name == "service.py":
             return "service.py.j2"
         elif name.endswith("_controller.py") or name.endswith("_api.py") or name.endswith("_router.py"):
             return "api_endpoint.py.j2"
-            
+
         return None
 
     def render(self, template_name: str, context: Dict[str, Any]) -> str:

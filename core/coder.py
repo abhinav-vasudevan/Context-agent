@@ -40,22 +40,22 @@ class Coder:
     ) -> Tuple[bool, Optional[str]]:
         """
         Generate code for a single plan step using V2 context.
-        
+
         Args:
             step: The PlanStep to execute
             context_text: The focused context built by ContextEngine
             on_token: Optional callback for streaming content tokens
             on_thinking: Optional callback for streaming thinking tokens
-            
+
         Returns:
             (success, error_message)
         """
         log.info("Coder: generating code for step %d (%s) using V2 context", step.step_number, step.file_path)
 
         system_prompt = "You are an elite Software Engineer. You must output the entire file content. Never use placeholders like '# ...' or '// ...'."
-        
+
         prompt = f"TASK:\n{step.description}\n\nFILE PATH:\n{step.file_path}\n\nCONTEXT:\n{context_text}\n\n"
-        
+
         if stub_content:
             prompt += f"EXISTING SKELETON:\n{stub_content}\n\n"
             prompt += "Implement the actual logic inside the provided skeleton. You MUST return the complete file."
@@ -75,7 +75,7 @@ class Coder:
             return False, f"LLM Generation Error: {str(e)}"
 
         raw_output = "".join(chunks)
-        
+
         if not raw_output.strip():
             return False, "LLM returned empty output"
 
@@ -85,15 +85,15 @@ class Coder:
             return False, "LLM returned a placeholder snippet. You MUST output the ENTIRE file without using '# ...' placeholders."
 
         file_path = self.workspace / step.file_path
-        
+
         if not step.file_path or step.file_path.endswith("/") or file_path.is_dir() or file_path == self.workspace:
             file_path.mkdir(parents=True, exist_ok=True)
             step.summary = f"Created directory {step.file_path}"
             return True, None
-            
+
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(code, encoding="utf-8")
-        
+
         log.info("Coder: saved file %s (%d bytes)", step.file_path, len(code))
 
         if step.file_path.endswith(".py"):
@@ -115,10 +115,10 @@ class Coder:
         ctx = self.assembler.build_coder_prompt(step)
         current_prompt = ctx["prompt"]
         system_prompt = ctx["system"]
-        
+
         max_iterations = 5
         final_code = ""
-        
+
         for iteration in range(max_iterations):
             log.info("Coder: loop iteration %d/%d", iteration + 1, max_iterations)
             chunks = []
@@ -140,19 +140,19 @@ class Coder:
             current_prompt += f"\n\nASSISTANT:\n{raw_output}\n\n"
             system_reply = "SYSTEM:\n"
             action_taken = False
-            
+
             # Check for <write_file>
             write_matches = list(re.finditer(r'<write_file\s+path=["\']([^"\']+)["\']>(.*?)</write_file>', raw_output, re.IGNORECASE | re.DOTALL))
             for m in write_matches:
                 fpath = m.group(1).strip()
                 code = m.group(2).strip()
                 full_path = self.workspace / fpath
-                
+
                 if not self._syntax_runner.security.is_within_workspace(full_path, self.workspace):
                     system_reply += f"--- SECURITY BLOCKED: Path traversal attempt to {fpath} ---\n"
                     action_taken = True
                     continue
-                    
+
                 full_path.parent.mkdir(parents=True, exist_ok=True)
                 full_path.write_text(code, encoding="utf-8")
                 system_reply += f"--- Successfully wrote to {fpath} ---\n"
@@ -165,25 +165,25 @@ class Coder:
                 fpath = m.group(1).strip()
                 edit_blocks = m.group(2)
                 full_path = self.workspace / fpath
-                
+
                 if not self._syntax_runner.security.is_within_workspace(full_path, self.workspace):
                     system_reply += f"--- SECURITY BLOCKED: Path traversal attempt to {fpath} ---\n"
                     action_taken = True
                     continue
-                
+
                 if not full_path.exists():
                     system_reply += f"--- Edit Failed: {fpath} does not exist ---\n"
                     action_taken = True
                     continue
-                    
+
                 content = full_path.read_text(encoding="utf-8")
                 blocks = re.findall(r'<<<<<<<\s*SEARCH\n(.*?)\n=======\n(.*?)\n>>>>>>>\s*REPLACE', edit_blocks, re.DOTALL)
-                
+
                 if not blocks:
                     system_reply += f"--- Edit Failed for {fpath}: No valid SEARCH/REPLACE blocks found ---\n"
                     action_taken = True
                     continue
-                    
+
                 success_count = 0
                 for search_text, replace_text in blocks:
                     if search_text in content:
@@ -191,7 +191,7 @@ class Coder:
                         success_count += 1
                     else:
                         system_reply += f"--- Edit Warning for {fpath}: Could not find exact SEARCH block. Make sure to copy the EXACT lines. ---\n"
-                        
+
                 if success_count > 0:
                     full_path.write_text(content, encoding="utf-8")
                     system_reply += f"--- Successfully edited {fpath} ({success_count}/{len(blocks)} blocks applied) ---\n"
@@ -217,10 +217,10 @@ class Coder:
 
             if "<done>" in raw_output.lower():
                 break
-                
+
             if not action_taken:
                 system_reply += "You did not use <write_file>, <edit_file>, <run_command>, or <done>. Please output valid XML tags to proceed.\n"
-                
+
             current_prompt += system_reply
 
         # Fallback if no file was written
@@ -289,29 +289,29 @@ class Coder:
         if not blocks_quotes:
             # Also catch `python '''` which Ollama sometimes does
             blocks_quotes = re.findall(r"(?:python|py)?\s*'''\s*\n(.*?)(?:\n\s*'''|\Z)", raw_output, re.DOTALL | re.IGNORECASE)
-            
+
         if blocks_quotes:
             return blocks_quotes[-1].strip()
-            
+
         # Fallback: try generic code blocks without newlines (sometimes just ``` code ```)
         blocks_inline = re.findall(r'```(.*?)(?:\n\s*```|```|\Z)', raw_output, re.DOTALL)
         if blocks_inline:
             return blocks_inline[-1].strip()
-            
+
         # If no markdown blocks, check if the output starts with prose
-        # A simple heuristic: if it doesn't look like code, we return it as is 
+        # A simple heuristic: if it doesn't look like code, we return it as is
         # and hope the syntax checker catches it, prompting a fix
-        
+
         # Strip simple conversational prefixes
         cleaned = re.sub(r'^(Here is|Below is|This is|The following is)[^\n]*\n+', '', raw_output, flags=re.IGNORECASE).strip()
-        
+
         # Strip trailing conversational suffixes
         cleaned = re.sub(r'\n+(Let me know|This code|I have|Feel free)[^\n]*$', '', cleaned, flags=re.IGNORECASE).strip()
-        
+
         # Final catch: If the LLM just printed `python` or `python '''` at the very beginning of the file
         cleaned = re.sub(r'^(?:python|py)?\s*(?:```|r?\'\'\'|r?""")?\s*\n', '', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'\n\s*(?:```|r?\'\'\'|r?""")?\s*$', '', cleaned)
-        
+
         return cleaned
 
     @staticmethod

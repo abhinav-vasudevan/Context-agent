@@ -20,7 +20,7 @@ class StaticAnalyzer:
     def check_syntax(code_content: str, file_path: str = "<unknown>") -> Tuple[bool, str]:
         """
         Check if the code has valid Python syntax.
-        
+
         Returns:
             (is_valid, error_message)
         """

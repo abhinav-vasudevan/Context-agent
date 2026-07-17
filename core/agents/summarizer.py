@@ -83,7 +83,7 @@ Output ONLY the JSON object. No markdown. No explanation."""
         """Parse LLM output into a SemanticSummary object."""
         # Strip think blocks
         cleaned = re.sub(r'<think>.*?</think>', '', raw_output, flags=re.DOTALL)
-        
+
         # Extract JSON
         json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', cleaned, re.DOTALL)
         if json_match:

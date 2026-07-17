@@ -47,7 +47,7 @@ class LLMClient:
 
         self.use_groq = getattr(config, "USE_GROQ", False) and getattr(config, "GROQ_API_KEY", "")
         self.use_gemini = getattr(config, "USE_GEMINI", False) and getattr(config, "GEMINI_API_KEY", "")
-        
+
         if self.use_groq:
             self.groq_api_key = config.GROQ_API_KEY
             self.model = getattr(config, "GROQ_MODEL", "llama-3.3-70b-versatile")
@@ -67,7 +67,7 @@ class LLMClient:
                 )
                 self.model = "gemini-2.0-flash"
                 log.info("Initialized Google Gemini API.")
-        
+
         if not self.use_groq and not self.use_gemini:
             self.base_url = base_url.rstrip("/")
             self.model = model
@@ -203,7 +203,7 @@ class LLMClient:
                 elif e.response.status_code == 429 or e.response.status_code >= 500:
                     # For 429s, allow up to 10 attempts since rate limits (e.g. Tokens per Minute) can take 60s to clear.
                     max_attempts = 10 if e.response.status_code == 429 else config.OLLAMA_MAX_RETRIES
-                    
+
                     if attempt < max_attempts - 1:
                         wait = config.OLLAMA_RETRY_BACKOFF * (2 ** attempt)
                         if e.response.status_code == 429:
@@ -228,7 +228,7 @@ class LLMClient:
                         log.warning("Model %s does not support thinking. Disabling thinking and retrying...", self.model)
                         self.__class__._thinking_unsupported_models.add(self.model)
                         continue
-                        
+
                     err_msg = f"Ollama Error ({e.response.status_code}). "
                     if e.response.status_code == 404:
                         err_msg += f"Model '{self.model}' not found. Please run 'ollama run {self.model}' in a terminal to download it."
@@ -283,7 +283,7 @@ class LLMClient:
                 self.model, len(prompt), len(system),
             )
             start_time = time.monotonic()
-            
+
             headers = {
                 "Authorization": f"Bearer {self.groq_api_key}",
                 "Content-Type": "application/json"
@@ -292,7 +292,7 @@ class LLMClient:
             if system:
                 messages.append({"role": "system", "content": system})
             messages.append({"role": "user", "content": prompt})
-            
+
             payload = {
                 "model": self.model,
                 "messages": messages,
@@ -303,10 +303,10 @@ class LLMClient:
                 payload["max_tokens"] = max_tokens_override
             if stop:
                 payload["stop"] = stop
-                
+
             prompt_tokens = self.count_tokens(prompt + system)
             completion_tokens = 0
-            
+
             try:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     async with client.stream(
@@ -320,7 +320,7 @@ class LLMClient:
                         except httpx.HTTPStatusError as e:
                             await e.response.aread()
                             raise
-                            
+
                         # If the API returns a JSON error instead of an event stream, it will have a different content type
                         content_type = resp.headers.get("content-type", "")
                         if "application/json" in content_type:
@@ -335,24 +335,24 @@ class LLMClient:
                                     break
                                 try:
                                     data = json.loads(data_str)
-                                    
+
                                     # Some APIs return stream errors as JSON chunks like {"error": {"message": "..."}}
                                     if "error" in data:
                                         err_msg = data["error"]
                                         if isinstance(err_msg, dict):
                                             err_msg = err_msg.get("message", str(err_msg))
                                         raise ValueError(f"API Provider Stream Error: {err_msg}")
-                                        
+
                                     choices = data.get("choices", [])
                                     if choices:
                                         finish_reason = choices[0].get("finish_reason")
                                         if finish_reason == "length":
                                             log.warning("LLM output truncated by token limit (finish_reason='length'). Partial output will be used.")
                                             break
-                                            
+
                                         delta = choices[0].get("delta", {})
                                         token = delta.get("content", "")
-                                        
+
                                         # Handle reasoning tokens from advanced models (DeepSeek, Qwen reasoning, etc)
                                         reasoning = delta.get("reasoning", "") or delta.get("reasoning_content", "") or delta.get("thought", "")
                                         if reasoning:
@@ -361,7 +361,7 @@ class LLMClient:
                                             if not token:
                                                 # Don't yield reasoning as content
                                                 continue
-                                        
+
                                         if not token and delta and "role" not in delta and "tool_calls" not in delta:
                                             if not self._logged_delta:
                                                 log.warning("Unknown delta format from model %s: %s", self.model, delta)
@@ -374,7 +374,7 @@ class LLMClient:
                                             yield token
                                 except json.JSONDecodeError:
                                     continue
-                
+
                 self.total_calls += 1
                 self.total_prompt_tokens += prompt_tokens
                 self.total_completion_tokens += completion_tokens
@@ -399,7 +399,7 @@ class LLMClient:
                 self.model, len(prompt), len(system),
             )
             start_time = time.monotonic()
-            
+
             prompt_tokens = 0
             try:
                 prompt_tokens = self.count_tokens(prompt + system)
@@ -410,13 +410,13 @@ class LLMClient:
                 generation_config_dict = {"temperature": self.temperature}
                 if stop:
                     generation_config_dict["stop_sequences"] = stop
-                
+
                 response = await self.gemini_model.generate_content_async(
                     prompt,
                     stream=True,
                     generation_config=genai.types.GenerationConfig(**generation_config_dict)
                 )
-                
+
                 completion_tokens = 0
                 async for chunk in response:
                     token = chunk.text
@@ -425,7 +425,7 @@ class LLMClient:
                         if on_token:
                             on_token(token)
                         yield token
-                
+
                 self.total_calls += 1
                 self.total_prompt_tokens += prompt_tokens
                 self.total_completion_tokens += completion_tokens
@@ -471,7 +471,7 @@ class LLMClient:
             "stream": True,
             "options": options,
         }
-        
+
         if self.model not in self.__class__._thinking_unsupported_models and not disable_think:
             payload["think"] = True
 
@@ -500,14 +500,14 @@ class LLMClient:
                         try:
                             data = json.loads(line)
                             msg = data.get("message", {})
-                            
+
                             # Handle thinking tokens (separate field from content)
                             thinking_token = msg.get("thinking", "")
                             if thinking_token:
                                 if on_thinking:
                                     on_thinking(thinking_token)
                                 # Don't yield thinking as content
-                            
+
                             # Handle content tokens with <think> tag interception
                             content_token = msg.get("content", "")
                             if content_token:
@@ -550,7 +550,7 @@ class LLMClient:
                                         if on_thinking:
                                             on_thinking(self._think_buffer)
                                         self._think_buffer = ""
-                            
+
                             if data.get("done", False):
                                 self.total_calls += 1
                                 prompt_tokens = data.get("prompt_eval_count", 0)
@@ -579,7 +579,7 @@ class LLMClient:
         """
         if getattr(self, 'use_groq', False):
             return {
-                "ollama_running": True, 
+                "ollama_running": True,
                 "model_available": True,
                 "model_name": self.model,
                 "llm_provider": "groq",

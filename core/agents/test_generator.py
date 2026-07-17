@@ -11,8 +11,8 @@ class TestGeneratorAgent:
     Generates Pytest tests based on Contract-First skeletons.
     This enables Test-Driven Development (TDD) as part of Phase 8.
     """
-    
-    SYSTEM_PROMPT = """You are an expert QA Engineer. 
+
+    SYSTEM_PROMPT = """You are an expert QA Engineer.
 You are presented with a Python stub file (skeleton) containing empty methods and classes.
 Your task is to write comprehensive Pytest test cases for this skeleton.
 Assume the logic will be implemented shortly.
@@ -36,16 +36,16 @@ Rules:
         for original_path, stub_content in stubs.items():
             if not original_path.endswith(".py") or "test_" in original_path:
                 continue
-                
+
             path_obj = Path(original_path)
             test_file_name = f"test_{path_obj.name}"
             test_path = path_obj.parent / test_file_name
             test_path_str = str(test_path).replace("\\", "/")
-            
+
             prompt = f"TARGET FILE PATH: {original_path}\n\nSTUB CONTENT:\n{stub_content}\n\nWrite the pytest suite for this stub now."
-            
+
             log.info(f"TestGeneratorAgent: Generating tests for {original_path}")
-            
+
             chunks = []
             async for chunk in self.llm.generate_stream(
                 prompt=prompt,
@@ -53,9 +53,9 @@ Rules:
                 on_token=on_token
             ):
                 chunks.append(chunk)
-                
+
             test_code = "".join(chunks).strip()
-            
+
             # Clean up markdown formatting if the LLM leaked it despite instructions
             if test_code.startswith("```python"):
                 test_code = test_code[9:]
@@ -63,7 +63,7 @@ Rules:
                 test_code = test_code[3:]
             if test_code.endswith("```"):
                 test_code = test_code[:-3]
-                
+
             tests[test_path_str] = test_code.strip()
-            
+
         return tests

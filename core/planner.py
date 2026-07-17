@@ -69,13 +69,13 @@ class Planner:
     ) -> str:
         """
         Phase 2: Generate a plan from the user's prompt and architectural blueprint.
-        
+
         Args:
             user_prompt: The user's project description
             architecture_text: The deeply reasoned architecture.md text
             on_token: Optional callback for streaming tokens to UI
             on_thinking: Optional callback for streaming thinking tokens to UI
-            
+
         Returns:
             The raw plan text
         """
@@ -85,7 +85,7 @@ class Planner:
 
         # Stream the plan generation so user sees it being built
         chunks = []
-        
+
         try:
             async for chunk in self.llm.generate_stream(
                 prompt=ctx["prompt"],
@@ -94,22 +94,22 @@ class Planner:
                 on_thinking=on_thinking,
             ):
                 chunks.append(chunk)
-                
+
         except Exception as e:
             log.error("Planner generation failed: %s", e)
             raise ValueError(f"Planner failed to generate from the API: {str(e)}")
 
         plan_text = "".join(chunks)
-        
+
         # Remove any <think> blocks from the final plan string so the parser doesn't see them
         plan_text = re.sub(r'<think>.*?</think>', '', plan_text, flags=re.DOTALL)
         # Also strip unclosed blocks (model hit token limit mid-think)
         plan_text = re.sub(r'<think>.*$', '', plan_text, flags=re.DOTALL)
-        
+
         # Support Ollama alternative output formats
         plan_text = re.sub(r'Thinking\.\.\..*?\.\.\.done thinking\.', '', plan_text, flags=re.DOTALL)
         plan_text = re.sub(r'Thinking\.\.\..*$', '', plan_text, flags=re.DOTALL)
-        
+
         log.info("Planner: plan generated (len=%d)", len(plan_text))
 
         return plan_text
@@ -117,23 +117,23 @@ class Planner:
     def parse_plan(self, plan_text: str) -> List[PlanStep]:
         """
         Parse a plan text into structured PlanStep objects.
-        
+
         Expected format:
             STEP 1: [title]
             FILE: [file_path]
             DEPENDS: [step numbers or "none"]
             DESCRIPTION: [description]
             ---
-            
+
         Uses a two-pass approach:
         1. Primary: Split on STEP N: headers
         2. Fallback: Look for numbered lists with file paths
-            
+
         Returns:
             List of PlanStep objects
         """
         steps = []
-        
+
         # Pre-process: strip markdown code fences wrapping the whole plan
         cleaned = plan_text.strip()
         if cleaned.startswith("```"):
@@ -148,7 +148,7 @@ class Planner:
             block = block.strip()
             if not block:
                 continue
-            
+
             # Remove any trailing --- from the block if they exist
             block = re.sub(r'\n---+\s*$', '', block).strip()
 
@@ -178,24 +178,24 @@ class Planner:
         steps = []
         # Match patterns like "1." or "1)" at the start of a line
         blocks = re.split(r'\n(?=\d+[.)]\s)', '\n' + text)
-        
+
         for block in blocks:
             block = block.strip()
             if not block:
                 continue
-                
+
             # Try to extract number, title, and file path
             num_match = re.match(r'(\d+)[.)]\s*\**([^*\n:]+)\**', block)
             if not num_match:
                 continue
-                
+
             step_number = int(num_match.group(1))
             title = num_match.group(2).strip(' -:')
-            
+
             # Try to find a file path
             file_match = re.search(r'(?:FILE\s*:|file\s*:|\b)((?:src/)?[\w/]+\.(?:py|md|txt))\b', block, re.IGNORECASE)
             file_path = file_match.group(1).strip() if file_match else ""
-            
+
             if not file_path:
                 # Try to infer from title
                 entry_point = self.state.project_entry_point or 'main.py'
@@ -205,20 +205,20 @@ class Planner:
                     file_path = 'README.md'
                 else:
                     continue  # Skip blocks without a detectable file path
-            
+
             # Description is the rest of the block
             description = block[num_match.end():].strip(' -:\n')
-            
+
             steps.append(PlanStep(
                 step_number=step_number,
                 title=title,
                 file_path=file_path,
                 description=description or title,
             ))
-        
+
         if steps:
             log.info("Fallback parser found %d steps", len(steps))
-        
+
         return steps
 
     def _parse_step_block(self, block: str) -> Optional[PlanStep]:
@@ -346,7 +346,7 @@ class Planner:
         readme_step = next((s for s in steps if s.file_path == "README.md"), None)
         if readme_step:
             steps.remove(readme_step)
-        
+
         readme_step = PlanStep(
             step_number=len(steps) + 1,
             title="Create README.md",

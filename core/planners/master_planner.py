@@ -57,32 +57,32 @@ GLOBAL ARCHITECTURE RULES (CRITICAL, HIGHEST PRIORITY):
 3. CONNECT OLD TO NEW: Always modify existing entry points to integrate new code. Do not leave code orphaned. Every step must be stitched together.
 """
 
-    VISION_SYSTEM_PROMPT = f"""You are a Principal Software Architect.
+    VISION_SYSTEM_PROMPT = """You are a Principal Software Architect.
 Your job is to analyze a user's request and decompose it into a system architecture.
 
-{{GLOBAL_ARCHITECTURE_RULES}}
+{GLOBAL_ARCHITECTURE_RULES}
 
 CRITICAL INSTRUCTION: DO NOT USE `<think>` TAGS. OUTPUT ONLY THE JSON IMMEDIATELY. NO REASONING, NO MARKDOWN, NO CODE FENCES.
 
 You must output a STRICT JSON object with this exact schema:
 
-{{
+{
   "name": "Project Name",
   "vision": "A 1-2 sentence vision statement.",
   "scale": "small | medium | large",
   "project_entry_point": "path/to/main_starting_point.py",
   "subsystems": [
-    {{
+    {
       "name": "Subsystem Name",
       "purpose": "One sentence explaining why this subsystem exists.",
       "responsibilities": ["responsibility 1"],
       "boundaries": ["boundary 1"],
       "dependencies": []
-    }}
+    }
   ],
   "adrs": [],
   "constraints": []
-}}
+}
 
 SCALING RULES (CRITICAL):
 - SIMPLE request (calculator, script, CLI tool): Output EXACTLY 1 subsystem. NO ADRs. Keep it extremely brief.
@@ -127,26 +127,26 @@ MANDATORY RULES:
 6. Keep descriptions EXTREMELY short (1 sentence max) to save tokens.
 7. NO HALLUCINATIONS: Do NOT add AI/LLM integrations (e.g. ollama, openai, httpx) unless the user's prompt explicitly requests them."""
 
-    COMPLEXITY_SYSTEM_PROMPT = f"""You are a Principal Software Architect determining the scale of a project.
+    COMPLEXITY_SYSTEM_PROMPT = """You are a Principal Software Architect determining the scale of a project.
 Analyze the user's request and classify its complexity.
 
-{{GLOBAL_ARCHITECTURE_RULES}}
+{GLOBAL_ARCHITECTURE_RULES}
 
 CRITICAL INSTRUCTION: OUTPUT ONLY THE JSON IMMEDIATELY.
 
 Format:
-{{
+{
   "scale_estimate": "simple | medium | large | massive",
   "project_entry_point": "path/to/main_starting_point.py",
   "epics": [
-    {{
+    {
       "name": "Epic Name",
       "purpose": "One sentence purpose",
       "public_api_contract": ["API or Interface 1", "API 2"],
       "depends_on_epics": ["Epic Name 1"]
-    }}
+    }
   ]
-}}
+}
 
 SCALING RULES:
 - simple (1-5 files): Single script, calculator. Output EXACTLY 1 Epic.
@@ -224,7 +224,7 @@ SCALING RULES:
             description=data.get("vision", ""),
             constraints=data.get("constraints", []),
         )
-        
+
         # We don't store project_entry_point in ArchitectureSpec directly, it goes to ProjectState
         # But we can extract it for caller use if needed, for now we just parse subsystems.
 
@@ -294,7 +294,7 @@ SCALING RULES:
         json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', cleaned, re.DOTALL)
         if json_match:
             cleaned = json_match.group(1)
-        
+
         cleaned = cleaned.strip()
         start = cleaned.find('{')
         end = cleaned.rfind('}')
@@ -336,9 +336,9 @@ SCALING RULES:
         Uses the AST context of previously completed Epics and their summaries.
         """
         log.info("MasterPlanner: generating Sprint plan for Epic %s", epic.name)
-        
+
         epic.subsystem = SubsystemSpec(name=epic.name, purpose=epic.purpose)
-        
+
         prompt = f"""EPIC TO PLAN:
 Name: {epic.name}
 Purpose: {epic.purpose}
@@ -370,7 +370,7 @@ Generate the detailed services and modules for this Epic only. Be sure to output
         arch = self._parse_services(raw_output, ArchitectureSpec(name=epic.name, subsystems=[epic.subsystem]))
         if arch.subsystems:
             epic.subsystem = arch.subsystems[0]
-            
+
         return epic
 
     # ── Stage 2: Service & Module Decomposition ───────────────────────
@@ -473,7 +473,7 @@ Break each subsystem into concrete services and file modules now."""
                 continue
             sub_name = sub_data.get("name", "")
             subsystem = name_to_subsystem.get(sub_name.lower().strip())
-            
+
             if not subsystem:
                 # Fallback: match by index if counts align perfectly, or if there's only 1
                 if len(arch.subsystems) == len(data.get("subsystems", [])):
@@ -604,9 +604,9 @@ Break each subsystem into concrete services and file modules now."""
         Generate a list of PlanSteps to update an existing project.
         """
         from models.state import PlanStep
-        
+
         log.info("MasterPlanner: generating update plan for prompt")
-        
+
         system_prompt = """You are a Principal Software Architect.
 Your task is to generate a JSON array of steps to update the existing project based on the user's request.
 CRITICAL: DO NOT use <think> tags. OUTPUT ONLY VALID JSON.
@@ -621,12 +621,12 @@ Format:
 ]"""
 
         files_context = "\n".join([f"- {entry.path}" for entry in state.file_registry])
-        
+
         master_summary_context = ""
         if state.user_documents:
             summaries = [doc.master_summary for doc in state.user_documents]
-            master_summary_context = f"\n\nPROJECT MASTER SPECIFICATIONS:\n" + "\n---\n".join(summaries)
-        
+            master_summary_context = "\n\nPROJECT MASTER SPECIFICATIONS:\n" + "\n---\n".join(summaries)
+
         user_prompt = f"""USER REQUEST:
 {prompt}{master_summary_context}
 
@@ -650,7 +650,7 @@ Output the JSON array of steps."""
         json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', cleaned, re.DOTALL)
         if json_match:
             cleaned = json_match.group(1)
-            
+
         start = cleaned.find('[')
         end = cleaned.rfind(']')
         if start >= 0 and end > start:

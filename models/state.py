@@ -25,7 +25,7 @@ class UserDocument:
     filename: str
     master_summary: str
     chunk_count: int
-    
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -89,7 +89,7 @@ class FileEntry:
 
         if self.functions:
             lines.append(f"    functions: {', '.join(self.functions)}")
-            
+
         if self.calls:
             lines.append(f"    outgoing_calls: {', '.join(self.calls)}")
             for fn in self.functions:
@@ -196,7 +196,7 @@ class ProjectState:
     # Workspace path (set after project directory is created)
     workspace_path: str = ""
     venv_path: str = ""
-    
+
     # V2 Project Brain Tracking
     brain_path: str = ""                       # path to .agent_brain directory
     hierarchy_spec_path: str = ""              # path to architecture_spec.json
@@ -408,7 +408,7 @@ class ProjectState:
         state.project_scale = data.get("project_scale", "medium")
         state.project_entry_point = data.get("project_entry_point", "")
         state.current_epic_id = data.get("current_epic_id")
-        
+
         # Rebuild Epics
         for ed in data.get("epic_queue", []):
             state.epic_queue.append(EpicSpec.from_dict(ed))

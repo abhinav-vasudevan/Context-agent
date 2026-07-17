@@ -428,7 +428,7 @@ class Runner:
 
             if not result.success:
                 result.error = stderr or f"Process exited with code {process.returncode}"
-            
+
             if input_terminated:
                 result.error = None
                 result.stdout += "\n[System: Auto-terminated validation run because it reached an input prompt successfully.]"
@@ -471,7 +471,7 @@ class Runner:
 
         log.info("Runner: executing shell command: %s", command)
         start_time = time.monotonic()
-        
+
         try:
             import os
             env = os.environ.copy()
@@ -491,7 +491,7 @@ class Runner:
 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=timeout)
             elapsed = int((time.monotonic() - start_time) * 1000)
-            
+
             return RunResult(
                 success=process.returncode == 0,
                 stdout=stdout_bytes.decode("utf-8", errors="replace"),
@@ -499,7 +499,7 @@ class Runner:
                 exit_code=process.returncode or 0,
                 runtime_ms=elapsed
             )
-            
+
         except asyncio.TimeoutError:
             try:
                 process.kill()
@@ -586,7 +586,7 @@ class Runner:
             )
 
     async def install_package(
-        self, 
+        self,
         package: str,
         on_stdout: Optional[Callable[[str], None]] = None,
         on_stderr: Optional[Callable[[str], None]] = None,
@@ -766,7 +766,7 @@ class Runner:
             pkg_dir = self.workspace
         elif (self.workspace / "frontend" / "package.json").exists():
             pkg_dir = self.workspace / "frontend"
-            
+
         if not pkg_dir:
             return RunResult(success=True, stdout="No package.json found.")
 
@@ -895,27 +895,27 @@ class ErrorParser:
 
     @staticmethod
     def _strip_terminal_noise(text: str) -> str:
-        """
+        r"""
         Strip terminal prompt noise from pasted text.
         Removes lines like:
             user@laptop:~/proj$ python main.py
             >>> import foo
             PS C:\> python main.py
-            (venv) user@host:~$ 
+            (venv) user@host:~$
         """
         lines = text.split('\n')
         cleaned = []
         traceback_started = False
-        
+
         for line in lines:
             stripped = line.strip()
-            
+
             # Detect traceback start
             if 'Traceback (most recent call last)' in stripped:
                 traceback_started = True
                 cleaned.append(line)
                 continue
-            
+
             # Before traceback starts, skip terminal prompts
             if not traceback_started:
                 # Skip lines that look like shell prompts
@@ -930,9 +930,9 @@ class ErrorParser:
                 # Skip lines that are just a command like "python main.py"
                 if re.match(r'^python[3]?\s+\w+\.py', stripped):
                     continue
-            
+
             cleaned.append(line)
-        
+
         return '\n'.join(cleaned)
 
     @staticmethod

@@ -196,7 +196,7 @@ class ProjectBrain:
             import graphify.extract
             import graphify.build
             from pathlib import Path
-            
+
             log.info("Starting Graphifyy extraction...")
             # Collect all python and frontend files
             paths = []
@@ -209,29 +209,29 @@ class ProjectBrain:
                 ".pytest_cache", ".mypy_cache"
             }
             paths = [
-                p for p in paths 
+                p for p in paths
                 if not any(part in ignored_dirs or (part.startswith('.') and part != '.agent_brain') for part in p.parts)
             ]
-            
+
             # Extract AST (skipping semantic LLM clustering to save time/tokens)
             extractions = graphify.extract.extract(paths)
-            
+
             # Ingest into Neo4j
             count = 0
-            
+
             nodes = extractions.get('nodes', [])
             edges = extractions.get('edges', [])
-            
+
             for node in nodes:
                 node_id = node.get('id')
                 label = node.get('label', 'Unknown')
                 file_type = node.get('file_type', 'code')
                 source_file = node.get('source_file', '')
-                
+
                 # We skip rationale since we have ChromaDB for semantics
                 if file_type == 'rationale':
                     continue
-                
+
                 # Add Symbol Node
                 self.graph.add_node("Symbol", {
                     "id": node_id,
@@ -243,14 +243,14 @@ class ProjectBrain:
                 if source_file:
                     self.graph.add_node("File", {"path": source_file, "name": Path(source_file).name})
                     self.graph.add_edge("File", source_file, "Symbol", node_id, "CONTAINS")
-                
+
                 count += 1
-                
+
             for edge in edges:
                 source = edge.get('source')
                 target = edge.get('target')
                 relation = edge.get('relation', 'CALLS').upper()
-                
+
                 if source and target:
                     # We ensure target exists, as graphify might point to external dependencies
                     self.graph.add_node("Symbol", {"id": target, "name": target})

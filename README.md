@@ -1,158 +1,436 @@
-# Context Agent: Advanced Agentic Coding System
+# Context Agent
 
-**Context Agent**! This is a deterministic, highly-structured AI agent framework designed to architect, generate, and self-heal complex software projects autonomously. Instead of relying on unpredictable Multi-Agent DAGs that frequently lose context or hallucinate "code stitching," this system relies on a **Hierarchical Master Planner** and a **Concrete Context Engine** powered by Python AST parsing, Neo4j Graph Databases, and ChromaDB Vector Storage.
+An autonomous AI coding system that architects, generates, verifies, and self-heals software projects. You describe what you want to build in plain English, and the agent handles the rest from planning the architecture, writing every file, running static analysis, and fixing bugs automatically.
 
----
-
-## 🛠️ Tools & Frameworks Used
-
-- **FastAPI & Uvicorn**: The robust backend server handling REST API routes and WebSocket connections for real-time streaming, served by Uvicorn for high-performance async execution.
-- **React & Vite**: A completely unified frontend Dashboard and Workspace UI that seamlessly switches between "Create Workspace" (from scratch), "Ingest Codebase" (existing projects), and "Docs Operations" (pure RAG).
-- **Python AST**: Used to deterministically parse generated Python files and extract true function signatures, classes, and imports.
-- **Neo4j (Graphifyy)**: The core graph database that powers Graphifyy. It stores the project's entire knowledge graph (AST nodes, files, dependencies, symbols) for advanced Graph RAG and context filtering.
-- **ChromaDB & RecursiveCharacterChunker**: Acts as the semantic vector database to store file summaries, architecture specs, and natural language logic. Handles massive multi-document Map-Reduce chunking (e.g., PDFs, TXT, MD) to bypass LLM context constraints when summarizing or merging user requirements.
-- **OKF (Open Knowledge Format by Google)**: A highly-structured, strict markdown-based formatting paradigm. Files are stored in `.agent_brain/knowledge/*.md` and act as persistent, immutable system constraints. OKF allows the injection of architectural guardrails, specific coding guidelines, and domain knowledge directly into the LLM's primary system prompt, guaranteeing that the agent adheres to overarching project rules at every step of generation.
-- **Ollama / LiteLLM**: The core LLM client layer. Interacts with local models (e.g., `llama3.1:8b`, `qwen3.6:27b`) or cloud APIs (Groq, Gemini), managing streaming, JSON enforcement, and token limits.
-- **Pydantic & Dataclasses**: Enforces strict data models for internal agent state validation (`ProjectState`, `PlanSteps`, `ArchitectureSpecs`).
-- **Pytest & Venv**: The secure sandbox engine (`core/runner.py`) provisions isolated `venv` virtual environments for every project and uses `pytest` and `py_compile` to autonomously verify code execution and capture stack traces.
-- **XML Tooling & Surgical Editing**: The Coder and Fixer agents interact with the workspace exclusively via strict XML tools:
-  - `<write_file>`: For writing complete new files or completely overwriting existing ones.
-  - `<edit_file>`: For precise SEARCH/REPLACE blocks. Crucially, the Context Engine dynamically reads the exact content of existing files into the prompt, forcing the LLM to use `edit_file` to surgically inject new features or patch bugs into the middle of massive files without deleting the surrounding code or breaking old functionality.
-  - `<run_command>`: For securely executing terminal commands in the sandboxed workspace.
+The system works entirely on your local machine using open-source LLMs through Ollama. No cloud API keys are needed to get started.
 
 ---
 
-## 🚀 Getting Started (How to Run)
+## What It Does
 
-To run the Context Agent locally on your machine, you need to spin up both the FastAPI backend and the React/Vite frontend.
-
-1. **Prerequisites**: Ensure you have Python 3.10+ and Node.js installed. Ensure you have Ollama running locally (e.g., `ollama run qwen3.6:27b`).
-2. **Start the System**:
-   From the root of the project, run the bootstrap script:
-   ```bash
-   ./start.sh
-   ```
-   *(On Windows, run `start.bat`)*
-3. **Access the Dashboard**:
-   Once the servers boot, open your browser and navigate to:
-   **[http://localhost:5173](http://localhost:5173)**
+- Takes a natural language prompt and turns it into a fully working codebase
+- Breaks large projects into small, dependency-ordered steps so nothing gets missed
+- Writes each file one at a time, with full awareness of what was already written
+- Runs static analysis (Ruff, Pyright) after each file to catch errors early
+- Fixes errors automatically using an LLM-powered self-healing loop
+- Supports ingesting existing codebases and adding new features into them
+- Handles large requirement documents (PDF, TXT, MD) through chunked summarization
+- Provides a real-time web dashboard with live code streaming, plan tracking, and a knowledge graph
 
 ---
 
-## 🎮 How to Use the System
+## What You Need Before Starting
 
-The unified frontend Dashboard offers three distinct operational modes based on your goals:
+| Tool | Version | Purpose |
+|------|---------|---------|
+| **Python** | 3.10 or higher | Runs the backend server and all agent logic |
+| **Node.js** | 18 or higher | Runs the React frontend dev server |
+| **npm** | Comes with Node.js | Installs frontend packages |
+| **Ollama** | Latest | Serves local LLM models on your machine |
+| **Git** | Any recent version | Clone the repository |
 
-### 1. Build Mode (Create from Scratch)
-- Select the **Build** tab.
-- Enter a high-level prompt (e.g., "Build a multi-user JWT chat app").
-- The system will analyze the prompt, run the `MasterPlanner`, and generate a hierarchical Epic-based architecture.
-- Review the queued steps in the UI and click **Approve Plan** to start the autonomous code generation loop.
+### Optional (for advanced features)
 
-### 2. Ingest Mode (Modify Existing Codebase)
-- Select the **Ingest** tab.
-- Provide the **absolute path** to an existing project on your local machine (e.g., `/home/user/my_legacy_project`).
-- Provide an instruction (e.g., "Add Google OAuth login").
-- The system will first trigger the `UnderstandingAgent` to map out your existing AST and find your entry points. It will then generate an update plan that uses surgical `<edit_file>` operations to seamlessly weave the new feature into your existing code.
-
-### 3. Docs Mode (Requirement Ingestion)
-- Select the **Docs** tab.
-- Upload massive requirement documents (PDF, TXT, MD).
-- The system uses Map-Reduce chunking to semantically digest the documents and consolidate them into a dense master specification that guides the `MasterPlanner`.
+| Tool | Purpose |
+|------|---------|
+| **Neo4j Desktop** | Knowledge graph storage for architecture visualization |
+| **Ruff** | Fast Python linter (auto-installed in project venv) |
+| **Pyright** | Python type checker (auto-installed in project venv) |
 
 ---
 
-## 🧠 How We Break the Context Window
+## Which LLM Model to Use
 
-Traditional AI coding agents fail on large codebases because they attempt to cram the entire project into the LLM's context window, leading to hallucination or catastrophic forgetting. **Context Agent completely shatters this limitation using a three-pronged approach:**
+The system works with Ollama (local models) or Groq/Gemini (cloud APIs). Here are the recommended models:
 
-1. **Output Scaling (Hierarchical Planner)**: The agent never writes a full app in one prompt. A Master Planner deduces the architecture and breaks it into a strict, dependency-ordered sequence of single-file generation steps.
-2. **Input Scaling (Neo4j Graph + AST Registry)**: As the project grows to thousands of lines, the agent never reads the raw code of previously generated files. Instead, it maintains an **AST File Registry** (extracting only exact function/class signatures and imports). To compress this even further, the **Neo4j Knowledge Graph** dynamically queries the closest relational neighbors (`MATCH (f:File)-[*1..2]-(other_f:File)`) to the file currently being worked on. The LLM receives *only* the exact API signatures of the files it actually needs to integrate with, keeping the context window incredibly small, cheap, and deterministically accurate.
-3. **Behavioral Scaling (Google OKF Integration)**: As a system scales, the LLM often forgets overarching architectural patterns, security rules, and code style. Instead of eating up the standard prompt context with these rules, we utilize Google's **Open Knowledge Format (OKF)**. By storing strict `.md` files in `.agent_brain/knowledge/`, these rules are embedded deeply and immutably into the absolute highest priority layer of the LLM's system prompt. This guarantees permanent, unshakeable alignment with the project's core philosophy regardless of how long the generation loop runs.
+### For Best Results (needs 16 GB+ RAM)
 
----
+```
+ollama pull qwen3.6:27b
+```
 
-## 🏗️ The Complete Flow: From Prompt to Final Project
+**qwen3.6:27b** has built-in reasoning capabilities. It produces the most accurate code and can handle complex multi-file projects without hallucinating imports or breaking integration between files.
 
-### Phase 1: Ingestion & Complexity Analysis
-1. **Codebase Ingestion (For Existing Projects)**: If pointing to an existing directory, the `RepositoryIngester` and the `UnderstandingAgent` scan the entire source code. They intelligently map the architecture and extract the exact starting entry point (e.g., `main.py`, `src/index.js`), completely eliminating hardcoded defaults. The AI is forced to stitch its new features seamlessly into this discovered architecture.
-2. **Document Ingestion (Map-Reduce)**: If the user uploads massive requirement documents (PDFs, TXT), the system automatically chunks them using `RecursiveCharacterChunker` and extracts global master specifications, solving context window overflows before planning even begins.
-3. **Scale Classification & Hierarchical Planning (V2 Architecture)**: For large projects, the `MasterPlanner` deduces overarching architectural constraints and breaks the system down into concrete **Epics** and **Subsystems**, then queues them.
+### For Local Systems with Limited RAM (8 GB)
 
-### Phase 2: Scaffolding, Testing, & Code Generation
-Once the plan is approved, the `Orchestrator` begins the execution loop step-by-step:
-1. **Scaffolding (Skeleton Generation)**: The `ArchitectAgent` rapidly generates "stubs" or skeletons for every file in the Epic. These stubs contain only class names and function signatures with `pass` statements. This guarantees perfect imports and prevents "Module Not Found" errors during code generation.
-2. **Test Generation (TDD)**: The `TestGeneratorAgent` reads the empty stubs and generates failing Unit Tests for every module based on the requirements.
-3. **Context Assembly**: For each file, the `ContextAssembler` builds the LLM prompt. It injects the specific instructions and the **AST File Registry** (filtered dynamically using the Neo4j Graph). **Critically, if the file already exists, it injects the exact raw source code into the prompt and orders the LLM to use `<edit_file>`.**
-4. **Code Generation**: The `CoderAgent` uses the assembled context to write the actual raw code logic enclosed in strict XML tags (`<write_file>` or `<edit_file>`).
-5. **Integration**: The `IntegrationAgent` automatically wires the files together and securely imports the new modules.
+```
+ollama pull llama3.1:8b
+```
 
-### Phase 3: Verification, Deep Semantic Analysis, and Self-Healing
-1. **Sandbox Execution**: The `Runner` securely tests the generated code (e.g., `python -m py_compile`).
-2. **The Deep Semantic Analyzer (`core/analyzer.py`)**: Before the Fixer attempts any repair, the Orchestrator invokes the `StaticAnalyzer` which orchestrates three industry-grade semantic analysis tools running securely in the venv:
-   - **Ruff** (`ruff check`): Executes lightning-fast analysis to catch syntax violations and basic linting errors.
-   - **Pyright** (`pyright`): Performs deep semantic type-checking to catch logic errors, mismatched function signatures, and complex inheritance issues across the whole project graph.
-   - **Semgrep** (`semgrep scan`): Scans the codebase for security vulnerabilities, hardcoded secrets, and complex AST-level anti-patterns.
-3. **Deep Semantic Fixer Loop**: The Analyzer extracts the JSON output from all three tools and aggregates them into a highly structured Fix Prompt. The `Fixer` agent acts as an advanced automated debugger, exploring the workspace using `<view_file>`, cross-referencing semantic errors, and patching the code using precise `<edit_file>` search-and-replace blocks. It repeats this autonomously until all three semantic analyzers pass perfectly.
-4. **Interactive State Rewind & Retry**: At any point during execution, if a step fails or produces conceptually flawed code, the user can hit the **Retry (`re`)** button in the UI. The Orchestrator gracefully intercepts this, instantly cancels the active LLM generation, rewinds the step status, and autonomously restarts the execution pipeline.
-5. **Graph Ingestion**: Once a file is stable, the `Summarizer` agent reads the code, and the `ProjectBrain` ingests the file's AST into Neo4j and its semantic summary into ChromaDB, updating the Graphifyy knowledge base for future context queries.
+or
+
+```
+ollama pull qwen3.5:9b
+```
+
+These smaller models work well for simple to medium projects. They may need more fix attempts on complex architectures but will still produce working code.
+
+### Using Cloud APIs (No Local GPU Needed)
+
+If you prefer cloud-hosted models, set your API key in the `.env` file:
+
+- **Groq**: Set `GROQ_API_KEY` and change `USE_GROQ = True` in `config.py`
+- **Google Gemini**: Set `GEMINI_API_KEY` and change `USE_GEMINI = True` in `config.py`
 
 ---
 
-## 🗂️ Directory & File Structure Deep Dive
+## Setup Instructions
 
-Here is exactly what every core backend file does in the Context Agent ecosystem:
+### Step 1: Clone the Repository
 
-### `backend/`
-The API and Orchestration layer.
-- **`server.py`**: The FastAPI entry point. Defines all REST endpoints (`/api/project/create`, `/api/project/ingest`, `/api/plan/approve`, `/api/execute/all`) and mounts WebSockets.
-- **`orchestrator.py`**: The central state machine. Manages the lifecycle of a project, triggers document and codebase ingestions, runs the planner, iterates through plan steps, handles the Fixer fallback loops, and dispatches UI updates.
-- **`ws_manager.py`**: Handles active WebSocket connections, streaming live LLM tokens, step statuses, and terminal outputs to the user.
-- **`chat_agent.py`**: The interactive chat agent that supports chunk-based Document RAG processing for massive files (Map-Reduce summarization).
+```bash
+git clone https://github.com/abhinav-vasudevan/Context-agent.git
+cd Context-agent
+git checkout v2
+```
 
-### `core/`
-The autonomous agent logic and execution layer.
-- **`coder.py`**: Parses the LLM's XML responses (`<write_file>`, `<edit_file>`, `<run_command>`) and dynamically applies changes to the secure project sandbox.
-- **`context.py`**: The AST Context Assembler. Reads previously generated `.py` files to extract exact function signatures, preventing LLM hallucinations. For existing files, it mandates surgical `<edit_file>` operations over destructive overwrites.
-- **`fixer.py`**: The Self-Healing agent. Receives error tracebacks and autonomously issues search/replace blocks to fix bugs.
-- **`llm_client.py`**: A robust wrapper for calling LLMs. Handles context-window truncation, token estimation, JSON schema enforcement, and streaming.
-- **`runner.py`**: The secure sandbox engine. Manages isolated virtual environments (`venv`) and executes user applications safely as subprocesses.
-- **`analyzer.py`**: The Static Semantic Analyzer. Orchestrates Pyright, Ruff, and Semgrep to deeply analyze generated code before triggering the `fixer.py` loop.
-- **`checkpoint.py`**: Manages state snapshots for the interactive rewind/retry features.
-- **`planner.py`**: The legacy V1 flat planner (superseded by `master_planner.py`).
-- **`qa_agent.py`**: A quality assurance agent that reviews code logic and structure.
+### Step 2: Install Ollama and Pull a Model
 
-### `core/agents/`
-Specialized sub-agents that handle specific lifecycle phases.
-- **`architect_agent.py`**: Generates initial stubs/skeletons containing only class and function signatures.
-- **`design_reviewer.py`**: Critiques generated implementation plans against OKF design constraints.
-- **`integration_agent.py`**: Automatically wires generated files together and securely manages imports.
-- **`summarizer.py`**: Analyzes generated files and writes ultra-dense functional summaries for the ChromaDB semantic store.
-- **`test_generator.py`**: Reads empty stubs and generates failing Unit Tests for TDD workflows.
-- **`understanding_agent.py`**: Traces execution paths in existing codebases to find true entry points (`<entry_point>`) and architect maps during codebase ingestion.
+Go to [https://ollama.com](https://ollama.com) and install Ollama for your operating system.
 
-### `core/planners/`
-- **`master_planner.py`**: The V2 Hierarchical Planner. Uses multi-stage LLM calls to organically deduce large-scale system architectures (Subsystems -> Services -> Modules) from a single user prompt.
+Then pull the model you want to use:
 
-### `core/brain/` & `core/retrieval/` (Graphifyy Context Engine)
-- **`project_brain.py`**: The main entry point for the V2 Context Engine. Orchestrates data flow into the graph and vector databases.
-- **`knowledge_graph.py`**: Interfaces with Neo4j. Ingests AST file registries to map out structural dependencies.
-- **`semantic_store.py`**: Interfaces with ChromaDB. Stores natural language summaries for similarity search.
-- **`context_engine.py`**: The retrieval engine that fuses Graph queries (Neo4j) with Vector searches (ChromaDB) to dynamically filter the File Registry.
+```bash
+ollama pull qwen3.6:27b
+```
 
-### `core/ingestion/`
-Tools for processing user inputs before generation.
-- **`ingester.py`**: Scans user-provided codebases, triggering the `UnderstandingAgent` to automatically deduce entry points and architecture constraints for legacy project integration.
-- **`doc_ingester.py`**: Manages the pipeline for parsing requirement documents.
-- **`chunker.py` / `parser.py`**: Tools for recursive character chunking and parsing massive multi-format files (PDF, TXT, MD) into digestible segments for the LLM.
+Make sure Ollama is running before you start the agent:
 
-### `models/`
-Strict data schemas ensuring type safety across the system.
-- **`state.py`**: Defines `ProjectState`, `PlanStep`, and `FileEntry`.
-- **`hierarchy.py`**: Defines the V2 architectural models: `ArchitectureSpec`, `SubsystemSpec`, `ServiceSpec`, and `ModuleSpec`.
+```bash
+ollama serve
+```
 
-### Root Files
-- **`config.py`**: Centralized configuration hub (Token limits, API keys, Model names, Sandbox paths).
-- **`cli.py`**: A command-line interface alternative to interact with the orchestrator.
-- **`start.bat` / `start.sh`**: Bootstrap scripts to spin up the servers.
-- **`fix_graph.py`**: Utility script to manually re-ingest a project's architecture into Neo4j for debugging.
+> On most systems, Ollama starts automatically after installation. You can check by opening `http://127.0.0.1:11434` in your browser — if you see a response, it is running.
+
+### Step 3: Install and Configure Neo4j Desktop (Optional but Recommended)
+
+The system uses Neo4j to store the project's architecture graph. Without it, the graph features will be disabled but the system will still function.
+
+1. Download and install [Neo4j Desktop](https://neo4j.com/download/).
+2. Open Neo4j Desktop and create a new Project.
+3. Add a Local DBMS (Database Management System) to the project.
+4. Set the password for this DBMS (default expected password is `password`, but you can change it).
+5. Start the DBMS. It will run on the default bolt port `7687`.
+6. Make sure the database is running before you start Context Agent.
+
+> If you set a password other than `password`, you must update the `.env` file (see Step 6) with `NEO4J_PASSWORD=your_password`.
+
+### Step 4: Set Up the Python Backend
+
+#### On Linux / macOS
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+#### On Windows
+
+```powershell
+python -m venv venv
+.\venv\Scripts\activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### Step 5: Set Up the React Frontend
+
+```bash
+cd frontend
+npm install
+cd ..
+```
+
+### Step 6: Configure Environment Variables (Optional)
+
+Copy the example file and edit it if you want to use cloud APIs:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and add your API keys if needed. For local Ollama usage, no changes are needed.
+
+---
+
+## How to Run
+
+### Quick Start (Both Servers at Once)
+
+#### On Linux / macOS
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+#### On Windows
+
+Double-click `start.bat` or run in a terminal:
+
+```powershell
+.\start.bat
+```
+
+### Manual Start (Two Separate Terminals)
+
+**Terminal 1 — Backend:**
+
+```bash
+# Linux / macOS
+source venv/bin/activate
+python main.py
+
+# Windows
+.\venv\Scripts\activate
+python main.py
+```
+
+**Terminal 2 — Frontend:**
+
+```bash
+cd frontend
+npm run dev
+```
+
+### Open the Dashboard
+
+Once both servers are running, open your browser and go to:
+
+**[http://localhost:5173](http://localhost:5173)**
+
+The backend API runs at `http://127.0.0.1:8088`.
+
+---
+
+## How to Use
+
+The web dashboard has three modes:
+
+### Build Mode — Create a New Project from Scratch
+
+1. Click **Build** on the dashboard
+2. Give your project a name
+3. Type a description of what you want to build (for example: "Build a task manager with user authentication and a REST API")
+4. The agent generates a step-by-step architecture plan
+5. Review the plan and click **Approve**
+6. The agent writes all the files, installs dependencies, and runs tests automatically
+
+### Ingest Mode — Modify an Existing Codebase
+
+1. Click **Ingest** on the dashboard
+2. Enter the full path to your existing project on your machine
+3. Describe what you want to add or change
+4. The agent scans your codebase, understands the architecture, and generates a plan that edits your existing files without breaking them
+
+### Docs Mode — Upload Requirement Documents
+
+1. Upload PDF, TXT, or MD files with project requirements
+2. The agent reads and summarizes the documents
+3. It uses the extracted specifications to guide planning and code generation
+
+---
+
+## Project Structure
+
+```
+Context-agent/
+├── main.py                 # Entry point — starts the FastAPI backend
+├── cli.py                  # Command-line interface (alternative to web UI)
+├── config.py               # All settings: model names, ports, token limits, paths
+├── requirements.txt        # Python dependencies
+├── .env.example            # Template for API keys
+├── .contextrules           # Rules the LLM follows during code generation
+├── knowledge.json          # Ollama integration reference for generated projects
+├── start.bat               # Windows startup script
+├── start.sh                # Linux/macOS startup script
+├── setup.sh                # One-time environment setup script
+│
+├── backend/                # FastAPI server and orchestration
+│   ├── server.py           # REST API endpoints and WebSocket handler
+│   ├── orchestrator.py     # Main workflow engine — drives the full lifecycle
+│   ├── ws_manager.py       # WebSocket connection manager for live streaming
+│   └── chat_agent.py       # Document QA with map-reduce chunking
+│
+├── core/                   # Agent logic and execution engine
+│   ├── llm_client.py       # LLM wrapper (Ollama, Groq, Gemini) with streaming
+│   ├── coder.py            # Parses LLM output (write_file, edit_file, run_command)
+│   ├── fixer.py            # Self-healing agent — reads errors and patches code
+│   ├── runner.py           # Sandbox — manages venv and runs code safely
+│   ├── context.py          # AST parser — extracts function signatures for context
+│   ├── analyzer.py         # Static analysis runner (Ruff, Pyright)
+│   ├── planner.py          # Legacy flat planner (V1)
+│   ├── checkpoint.py       # State snapshots for retry/rewind
+│   └── qa_agent.py         # Quality assurance — tests the built application
+│
+│   ├── agents/             # Specialized sub-agents
+│   │   ├── architect_agent.py      # Generates file skeletons with signatures
+│   │   ├── integration_agent.py    # Wires files together, manages imports
+│   │   ├── summarizer.py           # Summarizes files for the knowledge store
+│   │   ├── understanding_agent.py  # Maps existing codebases during ingestion
+│   │   ├── test_generator.py       # Generates unit tests from stubs
+│   │   └── design_reviewer.py      # Reviews plans against design rules
+│   │
+│   ├── brain/              # Project knowledge storage
+│   │   ├── project_brain.py    # Main brain — coordinates graph + vector stores
+│   │   ├── knowledge_graph.py  # Neo4j interface for architecture graphs
+│   │   └── semantic_store.py   # ChromaDB interface for semantic search
+│   │
+│   ├── retrieval/          # Context retrieval for code generation
+│   │   └── context_engine.py   # Fuses graph + vector search for smart context
+│   │
+│   ├── ingestion/          # Input processing
+│   │   ├── ingester.py     # Scans existing codebases
+│   │   ├── doc_ingester.py # Processes uploaded documents
+│   │   └── chunker.py      # Splits large text into manageable chunks
+│   │
+│   ├── planners/           # Planning engine
+│   │   └── master_planner.py   # Hierarchical planner (Epics → Subsystems → Modules)
+│   │
+│   ├── templates/          # Code generation templates
+│   │   ├── template_engine.py  # Jinja2 template renderer
+│   │   └── files/              # Template files (.j2)
+│   │
+│   └── verification/       # Code quality checks
+│       ├── static_analysis.py      # Ruff and Pyright runner
+│       └── architecture_validator.py # Validates generated architecture
+│
+├── models/                 # Data models
+│   ├── state.py            # ProjectState, PlanStep, FileEntry
+│   └── hierarchy.py        # ArchitectureSpec, SubsystemSpec, ModuleSpec
+│
+├── ui/                     # Terminal UI (for CLI mode)
+│   └── terminal_ui.py      # Rich-based terminal interface
+│
+├── frontend/               # React + Vite web dashboard
+│   ├── src/
+│   │   ├── App.jsx
+│   │   ├── pages/
+│   │   │   ├── Dashboard.jsx    # Project list and creation
+│   │   │   └── Workspace.jsx    # Main workspace with chat, plan, and graph
+│   │   ├── components/          # UI components (code viewer, plan panel, etc.)
+│   │   ├── services/api.js      # Backend API client
+│   │   └── hooks/useWebSocket.js # WebSocket hook for live updates
+│   ├── package.json
+│   ├── vite.config.js
+│   └── tailwind.config.js
+│
+├── projects/               # Generated project workspaces (created at runtime)
+│   └── .gitkeep
+│
+└── test_qa_agent.py        # Test script for the QA agent
+```
+
+---
+
+## Tools and Frameworks Used
+
+### Backend
+
+| Tool | What It Does |
+|------|-------------|
+| **FastAPI** | Python web framework for the REST API and WebSocket endpoints |
+| **Uvicorn** | ASGI server that runs FastAPI with async support |
+| **Pydantic** | Data validation and settings management for all internal models |
+| **httpx** | Async HTTP client for calling Ollama and cloud LLM APIs |
+| **websockets** | WebSocket protocol support for real-time frontend communication |
+| **Jinja2** | Template engine for generating boilerplate code files |
+| **NetworkX** | Graph library used internally for dependency analysis |
+| **ChromaDB** | Vector database for storing and searching file summaries |
+| **Neo4j** | Graph database for storing architecture knowledge graphs |
+| **PyPDF2** | PDF parser for reading uploaded requirement documents |
+| **python-multipart** | File upload handling for FastAPI |
+| **Rich** | Terminal formatting library for the CLI interface |
+| **Pytest** | Test runner used by the QA agent to verify generated code |
+
+### Frontend
+
+| Tool | What It Does |
+|------|-------------|
+| **React 19** | UI library for building the web dashboard |
+| **Vite** | Fast development server and build tool |
+| **TailwindCSS** | Utility-first CSS framework for styling |
+| **React Router** | Client-side routing between Dashboard and Workspace |
+| **Lucide React** | Icon library for the UI |
+| **react-force-graph-2d/3d** | Graph visualization for the architecture knowledge graph |
+| **Three.js** | 3D rendering engine used by the graph visualizer |
+| **xterm.js** | Terminal emulator component for showing process output |
+
+### LLM Providers
+
+| Provider | How It Works |
+|----------|-------------|
+| **Ollama** | Runs open-source models locally. Default and recommended |
+| **Groq** | Cloud API with fast inference. Needs API key |
+| **Google Gemini** | Cloud API from Google. Needs API key |
+
+### Code Quality Tools (Used Inside Generated Projects)
+
+| Tool | What It Does |
+|------|-------------|
+| **Ruff** | Lightning-fast Python linter that catches syntax and style issues |
+| **Pyright** | Deep Python type checker for catching logic and signature errors |
+
+---
+
+## Configuration
+
+All settings are in `config.py`. The most important ones:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `OLLAMA_MODEL` | `qwen3.6:27b` | Which Ollama model to use |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Where Ollama is running |
+| `BACKEND_PORT` | `8088` | Port for the FastAPI backend |
+| `USE_GROQ` | `False` | Set to `True` to use Groq cloud API |
+| `USE_GEMINI` | `False` | Set to `True` to use Google Gemini |
+| `MAX_FIX_ATTEMPTS` | `999999` | How many times the fixer will retry |
+| `OLLAMA_NUM_CTX` | `16384` | Context window size (tokens) |
+
+---
+
+## Troubleshooting
+
+### "Cannot connect to Ollama"
+
+Make sure Ollama is running:
+
+```bash
+ollama serve
+```
+
+Check that it responds at `http://127.0.0.1:11434`.
+
+### "Model not found"
+
+Pull the model first:
+
+```bash
+ollama pull qwen3.6:27b
+```
+
+### Frontend shows a blank page
+
+Make sure you ran `npm install` inside the `frontend/` directory and that `npm run dev` is running.
+
+### Port 8088 is already in use
+
+Another instance of the backend might be running. Kill it and restart:
+
+```bash
+# Linux / macOS
+lsof -i :8088 | grep LISTEN
+kill <PID>
+
+# Windows
+netstat -ano | findstr :8088
+taskkill /PID <PID> /F
+```
+
+---
+
+## License
+
+This project is for research and educational purposes.

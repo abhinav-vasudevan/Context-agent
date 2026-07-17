@@ -17,7 +17,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Uplo
 import shutil
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional
 
 # Ensure the project root is in the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -98,7 +98,7 @@ class UpdateModelRequest(BaseModel):
 async def update_model(req: UpdateModelRequest):
     """Update the global LLM model."""
     config.GROQ_MODEL = req.model_name
-    
+
     # Re-initialize the Orchestrator's LLMClient so it picks up the new model
     if orchestrator.llm:
         from core.llm_client import LLMClient
@@ -109,7 +109,7 @@ async def update_model(req: UpdateModelRequest):
             orchestrator.coder.llm = orchestrator.llm
         if orchestrator.fixer:
             orchestrator.fixer.llm = orchestrator.llm
-            
+
     return {"success": True, "model": req.model_name}
 
 @app.get("/api/health")
@@ -139,27 +139,26 @@ async def create_project(
     file: UploadFile = File(None)
 ):
     """Create a new project."""
-    file_path = None
     if file:
         # We need a temporary place or just let orchestrator handle it.
         # But wait, orchestrator doesn't know where to save until it creates the workspace.
         pass
-        
+
     result = await orchestrator.create_project(name, prompt, mode=mode)
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result.get("error", "Failed to create project"))
-        
+
     if file:
         docs_dir = orchestrator.workspace_dir / "documents"
         docs_dir.mkdir(exist_ok=True)
         saved_file_path = docs_dir / file.filename
         with open(saved_file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        
+
         # If build mode, auto-trigger the plan generation
         if mode == "build":
             asyncio.create_task(orchestrator.auto_build_from_file(str(saved_file_path), prompt))
-            
+
     return result
 
 
@@ -178,7 +177,7 @@ async def ingest_project(req: IngestRequest):
     result = await orchestrator.create_project(name=req.name, prompt="", target_dir=req.path, mode="ingest")
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result.get("error", "Failed to setup workspace for ingestion"))
-    
+
     # Trigger ingestion in background so UI can transition and listen to progress events
     import asyncio
     asyncio.create_task(orchestrator.ingest_codebase())
@@ -206,14 +205,13 @@ async def get_architecture_graph():
         return {"success": False, "error": str(e), "graph": {"nodes": [], "links": []}}
 
 
-from typing import List
 
 @app.post("/api/project/followup")
 async def project_followup(text: str = Form(...), files: List[UploadFile] = File(None)):
     """Trigger a manual fix/followup for the project, with optional files."""
     if not orchestrator.state:
         raise HTTPException(status_code=404, detail="No project loaded")
-    
+
     # Process files if any
     file_paths = []
     if files:
@@ -222,7 +220,6 @@ async def project_followup(text: str = Form(...), files: List[UploadFile] = File
         for file in files:
             file_path = docs_dir / file.filename
             with open(file_path, "wb") as buffer:
-                import shutil
                 shutil.copyfileobj(file.file, buffer)
             file_paths.append(str(file_path))
 
@@ -417,12 +414,12 @@ if __name__ == "__main__":
 async def ingest_document(file: UploadFile = File(...), doc_id: str = Form(...)):
     if not orchestrator.workspace_dir:
         raise HTTPException(status_code=400, detail="No active project workspace.")
-        
+
     # Save the uploaded file to a temporary location in the workspace
     docs_dir = orchestrator.workspace_dir / "documents"
     docs_dir.mkdir(exist_ok=True)
     file_path = docs_dir / file.filename
-    
+
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
