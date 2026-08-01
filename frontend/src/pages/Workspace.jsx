@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 import CodeViewer from '../components/CodeViewer';
+import PermissionModal from '../components/PermissionModal';
+import InputModal from '../components/InputModal';
 import { Terminal, FolderTree, Cpu, ArrowLeft, Send, Sparkles, BookOpen, Paperclip, X, Code2, User, ListTodo, CheckCircle2, Activity, Square, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
 import ArchitectureGraph from '../components/ArchitectureGraph';
 
@@ -36,6 +38,10 @@ export default function Workspace({ projectData, onBack }) {
   // Process output
   const [processOutput, setProcessOutput] = useState([]);
   const [processRunning, setProcessRunning] = useState(false);
+
+  // Permission / input gates (blocking modals over the running process)
+  const [permissionRequest, setPermissionRequest] = useState(null); // {request_id, question, default}
+  const [inputRequest, setInputRequest] = useState(null); // {prompt}
 
   // Code viewer
   const [selectedFile, setSelectedFile] = useState(null);
@@ -143,9 +149,43 @@ export default function Workspace({ projectData, onBack }) {
     },
     error: (data) => {
       console.error(data.error);
+      setProcessOutput(prev => [...prev, { type: 'stderr', text: `[Error] ${data.error}${data.file_path ? ` (${data.file_path})` : ''}\n` }]);
+    },
+    permission_request: (data) => {
+      setPermissionRequest(data);
+    },
+    input_request: (data) => {
+      setInputRequest(data);
     },
     pong: () => {},
   });
+
+  const handlePermissionResponse = async (granted) => {
+    setPermissionRequest(null);
+    try {
+      await api.respondPermission(granted);
+    } catch (e) {
+      console.error('Failed to respond to permission request:', e);
+    }
+  };
+
+  const handleInputSubmit = async (text) => {
+    setInputRequest(null);
+    try {
+      await api.sendInput(text);
+    } catch (e) {
+      console.error('Failed to send input:', e);
+    }
+  };
+
+  const handleInputCancel = async () => {
+    setInputRequest(null);
+    try {
+      await api.killProcess();
+    } catch (e) {
+      console.error('Failed to kill process:', e);
+    }
+  };
 
   const scrollToBottom = (ref, force = false) => {
     if (ref.current) {

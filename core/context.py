@@ -510,6 +510,39 @@ Output ONLY the one-sentence summary, nothing else."""
         except Exception as e:
             log.warning("Failed to load OKF knowledge base: %s", e)
 
+        try:
+            # Load .contextrules — the global strict rules the LLM must follow
+            # when planning/coding/fixing generated projects (config.CUSTOM_RULES_FILE)
+            rules_path = getattr(config, "CUSTOM_RULES_FILE", None)
+            if rules_path and Path(rules_path).exists():
+                rules_content = Path(rules_path).read_text(encoding="utf-8").strip()
+                if rules_content:
+                    self.custom_rules += f"\n\n{rules_content}\n"
+        except Exception as e:
+            log.warning("Failed to load .contextrules: %s", e)
+
+        try:
+            # Load knowledge.json — reference material (e.g. Ollama integration notes)
+            # injected into architect/planner system prompts for generated projects.
+            knowledge_file = config.PROJECT_ROOT / "knowledge.json"
+            if knowledge_file.exists():
+                raw = knowledge_file.read_text(encoding="utf-8").strip()
+                if raw:
+                    import json as _json
+                    data = _json.loads(raw)
+                    lines = ["\n\n=== REFERENCE KNOWLEDGE ==="]
+                    for key, entry in data.items():
+                        if isinstance(entry, dict):
+                            lines.append(f"--- {key} ---")
+                            for field, value in entry.items():
+                                lines.append(f"{field}: {value}")
+                        else:
+                            lines.append(f"{key}: {entry}")
+                    lines.append("===========================\n")
+                    self.knowledge = "\n".join(lines)
+        except Exception as e:
+            log.warning("Failed to load knowledge.json: %s", e)
+
     def build_coder_prompt(self, step: PlanStep) -> dict:
         """
         Build the complete prompt for code generation.

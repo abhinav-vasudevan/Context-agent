@@ -234,7 +234,7 @@ class Orchestrator:
 
         # Re-initialize V2 subsystems
         self.brain = ProjectBrain(self.workspace_dir)
-        self.context_engine = ContextEngine(self.brain, self.ws)
+        self.context_engine = ContextEngine(self.brain, self.state)
 
         self.master_planner = MasterPlanner(self.llm)
         self.coder = Coder(self.llm, self.state, self.workspace_dir)
@@ -343,8 +343,7 @@ class Orchestrator:
                 planning_prompt += "\n\nCRITICAL RULE FOR INGESTION MODE: You MUST prioritize editing existing files (like the root main.py). Do NOT create new files or new entry points unless absolutely necessary to avoid breaking the existing architecture. Your goal is to integrate directly into the old code."
 
             if SmartChunker.needs_chunking(planning_prompt):
-                chunks = SmartChunker.chunk(planning_prompt)
-                planning_prompt = chunks[0] + "\n\n[Prompt truncated for planning...]"
+                planning_prompt = await self._map_reduce_large_prompt(planning_prompt)
 
             # Determine Complexity / Epics
             self.state.status = "architecting"
@@ -441,6 +440,61 @@ class Orchestrator:
             return {"success": False, "error": str(e)}
         finally:
             self._planning_lock.release()
+
+    async def _map_reduce_large_prompt(self, text: str) -> str:
+        """
+        Map-reduce an oversized *typed/pasted* planning prompt instead of
+        naively keeping only its first chunk. Mirrors the map-reduce already
+        used for uploaded documents (ChatAgent.process_task /
+        UserDocumentIngester) so a large pasted specification is compressed
+        losslessly with respect to relevance, rather than truncated.
+        """
+        from core.ingestion.chunker import RecursiveCharacterChunker
+
+        chunker = RecursiveCharacterChunker(chunk_size=8000, overlap=400)
+        chunks = chunker.chunk_text(text)
+
+        if len(chunks) <= 1:
+            return text
+
+        await self.ws.send_status(
+            "planning", f"Prompt is very large — analyzing {len(chunks)} sections before planning..."
+        )
+
+        kept = []
+        for i, chunk in enumerate(chunks):
+            await self.ws.send_status("planning", f"Analyzing section {i + 1}/{len(chunks)}...")
+            map_prompt = (
+                "The following is one section of a large project specification pasted by the user.\n\n"
+                f"SECTION:\n{chunk}\n\n"
+                "Extract any requirements, architecture guidance, goals, or constraints from this section "
+                "that are relevant to building the software. If nothing in this section is relevant, "
+                "respond with exactly 'Not relevant'."
+            )
+            try:
+                summary = await self.llm.generate(prompt=map_prompt, system="You are a requirements analyst.")
+            except Exception as e:
+                log.warning("Map-reduce planning prompt: chunk %d failed: %s", i, e)
+                continue
+            if "not relevant" not in summary.strip().lower():
+                kept.append(summary.strip())
+
+        if not kept:
+            log.warning("Map-reduce planning prompt: no chunk yielded relevant content; using raw text.")
+            return text
+
+        await self.ws.send_status("planning", "Consolidating extracted requirements...")
+        reduce_prompt = (
+            "Combine the following extracted requirement fragments (from a large user-provided "
+            "specification) into one consolidated, coherent specification. Preserve every distinct "
+            "requirement; do not omit any of them.\n\n" + "\n\n---\n\n".join(kept)
+        )
+        try:
+            consolidated = await self.llm.generate(prompt=reduce_prompt, system="You are a lead software architect.")
+            return consolidated.strip() or text
+        except Exception as e:
+            log.warning("Map-reduce planning prompt: consolidation failed: %s", e)
+            return "\n\n".join(kept)
 
     async def approve_plan(self) -> dict:
         """Approve the plan and mark it ready for execution."""

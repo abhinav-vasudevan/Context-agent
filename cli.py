@@ -92,8 +92,16 @@ async def main():
     # ── 2. Planning ───────────────────────────────────────────────────
     ui.print_header("PHASE 1: PLANNING")
 
+    with ui.stream_llm("Generating Architecture...") as stream:
+        architecture_text = await planner.generate_architecture(planning_prompt, on_token=stream.on_token)
+
     with ui.stream_llm("Generating Plan...") as stream:
-        plan_text = await planner.generate_plan(planning_prompt, on_token=stream.on_token)
+        plan_text = await planner.generate_plan(planning_prompt, architecture_text, on_token=stream.on_token)
+
+    # Save architecture
+    arch_path = workspace_dir / "architecture.md"
+    arch_path.write_text(architecture_text, encoding="utf-8")
+    state.architecture_text = architecture_text
 
     # Save plan
     plan_path = workspace_dir / "plan.txt"
@@ -249,7 +257,7 @@ async def _fix_loop(ui: TerminalUI, fixer: Fixer, file_path: str, error_text: st
         ui.print_step(f"Fix Attempt {attempts}/{config.MAX_FIX_ATTEMPTS}", f"Analyzing {target_file}...")
 
         with ui.stream_llm("Generating fix...") as stream:
-            success, msg = await fixer.fix_error(target_file, current_error, on_token=stream.on_token)
+            success, msg, _fixed_files = await fixer.fix_error(target_file, current_error, on_token=stream.on_token)
 
         if not success:
             ui.print_error(msg)
