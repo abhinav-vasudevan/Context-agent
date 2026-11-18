@@ -1,0 +1,58 @@
+{
+  "task": "inventory_system",
+  "tests_total": 8,
+  "tests_passed": 1,
+  "pass_rate": 0.125,
+  "all_passed": false,
+  "smoke": {
+    "ran": false,
+    "crashed": true,
+    "exit_code": null,
+    "stderr_tail": "No main.py entry point in generated project"
+  },
+  "py_files": 4,
+  "tests": [
+    {
+      "test": "test_product_validation",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_duplicate_sku_rejected",
+      "passed": false,
+      "reason": "LookupError: Required symbol 'Inventory' not found in generated project (src\\inventory_module.py: NameError: name 'Product' is not defined)"
+    },
+    {
+      "test": "test_restock_and_errors",
+      "passed": false,
+      "reason": "LookupError: Required symbol 'Inventory' not found in generated project (src\\inventory_module.py: NameError: name 'Product' is not defined)"
+    },
+    {
+      "test": "test_sell_returns_amount_and_reduces_stock",
+      "passed": false,
+      "reason": "LookupError: Required symbol 'Inventory' not found in generated project (src\\inventory_module.py: NameError: name 'Product' is not defined)"
+    },
+    {
+      "test": "test_oversell_rejected_and_stock_unchanged",
+      "passed": false,
+      "reason": "LookupError: Required symbol 'Inventory' not found in generated project (src\\inventory_module.py: NameError: name 'Product' is not defined)"
+    },
+    {
+      "test": "test_total_value_and_low_stock",
+      "passed": false,
+      "reason": "LookupError: Required symbol 'Inventory' not found in generated project (src\\inventory_module.py: NameError: name 'Product' is not defined)"
+    },
+    {
+      "test": "test_format_report",
+      "passed": false,
+      "reason": "LookupError: Required symbol 'Inventory' not found in generated project (src\\inventory_module.py: NameError: name 'Product' is not defined)"
+    },
+    {
+      "test": "test_cli_end_to_end",
+      "passed": false,
+      "reason": "LookupError: No main.py entry point in generated project"
+    }
+  ],
+  "variant": "agent",
+  "wall_seconds": 2740.0
+}

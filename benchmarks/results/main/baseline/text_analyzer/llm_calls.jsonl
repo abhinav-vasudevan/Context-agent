@@ -1,0 +1,1 @@
+{"task": "text_analyzer", "variant": "baseline", "provider": "Ollama", "model": "llama3.1-bench:8b", "prompt_chars": 1476, "system_chars": 501, "component": "baseline", "t_start": 1794964084.8438303, "input_chars": 1977, "est_input_tokens": 549, "prompt_tokens": 520, "completion_tokens": 408, "seconds": 89.8}

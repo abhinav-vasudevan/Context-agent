@@ -1,0 +1,58 @@
+{
+  "task": "expression_evaluator",
+  "tests_total": 8,
+  "tests_passed": 1,
+  "pass_rate": 0.125,
+  "all_passed": false,
+  "smoke": {
+    "ran": true,
+    "crashed": true,
+    "exit_code": 1,
+    "stderr_tail": "Traceback (most recent call last):\n  File \"D:\\Documents\\L&T\\Context-agent-dev\\benchmarks\\results\\main\\baseline\\expression_evaluator\\workspace\\main.py\", line 15, in <module>\n    result = evaluate(expr)\n             ^^^^^^^^\nNameError: name 'evaluate' is not defined\n"
+  },
+  "py_files": 3,
+  "tests": [
+    {
+      "test": "test_tokenize_example",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_tokenize_rejects_invalid_characters",
+      "passed": false,
+      "reason": "Failed: DID NOT RAISE <class 'ValueError'>"
+    },
+    {
+      "test": "test_precedence_and_parentheses",
+      "passed": false,
+      "reason": "NameError: name 'tokenize' is not defined"
+    },
+    {
+      "test": "test_power_is_right_associative",
+      "passed": false,
+      "reason": "NameError: name 'tokenize' is not defined"
+    },
+    {
+      "test": "test_unary_minus",
+      "passed": false,
+      "reason": "NameError: name 'tokenize' is not defined"
+    },
+    {
+      "test": "test_decimals",
+      "passed": false,
+      "reason": "NameError: name 'tokenize' is not defined"
+    },
+    {
+      "test": "test_errors",
+      "passed": false,
+      "reason": "NameError: name 'tokenize' is not defined"
+    },
+    {
+      "test": "test_cli_end_to_end",
+      "passed": false,
+      "reason": "AssertionError: Traceback (most recent call last):"
+    }
+  ],
+  "variant": "baseline",
+  "wall_seconds": 107.2
+}

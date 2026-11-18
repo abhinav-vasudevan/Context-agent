@@ -1,0 +1,58 @@
+{
+  "task": "expression_evaluator",
+  "tests_total": 8,
+  "tests_passed": 0,
+  "pass_rate": 0.0,
+  "all_passed": false,
+  "smoke": {
+    "ran": false,
+    "crashed": true,
+    "exit_code": null,
+    "stderr_tail": "No main.py entry point in generated project"
+  },
+  "py_files": 3,
+  "tests": [
+    {
+      "test": "test_tokenize_example",
+      "passed": false,
+      "reason": "AssertionError: assert ['2*', '(', '3+4.5', ')'] == ['2', '*', '(...', '4.5', ...]"
+    },
+    {
+      "test": "test_tokenize_rejects_invalid_characters",
+      "passed": false,
+      "reason": "Failed: DID NOT RAISE <class 'ValueError'>"
+    },
+    {
+      "test": "test_precedence_and_parentheses",
+      "passed": false,
+      "reason": "IndexError: pop from empty list"
+    },
+    {
+      "test": "test_power_is_right_associative",
+      "passed": false,
+      "reason": "IndexError: pop from empty list"
+    },
+    {
+      "test": "test_unary_minus",
+      "passed": false,
+      "reason": "ValueError: Invalid token: -3"
+    },
+    {
+      "test": "test_decimals",
+      "passed": false,
+      "reason": "IndexError: pop from empty list"
+    },
+    {
+      "test": "test_errors",
+      "passed": false,
+      "reason": "IndexError: pop from empty list"
+    },
+    {
+      "test": "test_cli_end_to_end",
+      "passed": false,
+      "reason": "LookupError: No main.py entry point in generated project"
+    }
+  ],
+  "variant": "agent",
+  "wall_seconds": 981.9
+}

@@ -1,0 +1,51 @@
+{
+  "task": "gradebook",
+  "variant": "agent",
+  "model": "llama3.1-bench:8b",
+  "config_overrides": {
+    "MAX_FIX_ATTEMPTS": {
+      "original": 999999,
+      "benchmark": 4
+    },
+    "MAX_QA_ATTEMPTS": {
+      "original": 10,
+      "benchmark": 2
+    },
+    "MAX_QA_INTERACTIONS": {
+      "original": 20,
+      "benchmark": 8
+    },
+    "QA_PROCESS_TIMEOUT": {
+      "original": 1000,
+      "benchmark": 120
+    },
+    "PROCESS_RUN_TIMEOUT": {
+      "original": 1000,
+      "benchmark": 120
+    }
+  },
+  "phase": "done",
+  "sessions": 1,
+  "graph_available": true,
+  "plan_success": true,
+  "planned_files": [
+    "src/grading.py",
+    "src/gradebook.py",
+    "src/cli.py",
+    "requirements.txt",
+    "README.md"
+  ],
+  "project_scale": "medium",
+  "execute_success": true,
+  "steps_total": 5,
+  "steps_completed": 5,
+  "final_status": "completed",
+  "fix_counters": {
+    "fixer_calls": 0,
+    "installs": 0,
+    "installs_ok": 0
+  },
+  "seconds": 1015.4,
+  "fix_events": [],
+  "llm_calls": 12
+}

@@ -1,0 +1,53 @@
+{
+  "task": "text_analyzer",
+  "tests_total": 7,
+  "tests_passed": 4,
+  "pass_rate": 0.5714,
+  "all_passed": false,
+  "smoke": {
+    "ran": true,
+    "crashed": true,
+    "exit_code": 1,
+    "stderr_tail": "\\benchmarks\\results\\main\\baseline\\text_analyzer\\workspace\\main.py\", line 10, in <module>\n    sentences = sentence_count(text)\n                ^^^^^^^^^^^^^^^^^^^^\n  File \"D:\\Documents\\L&T\\Context-agent-dev\\benchmarks\\results\\main\\baseline\\text_analyzer\\workspace\\stats.py\", line 19, in sentence_count\n    sentences = re.findall(r\"[.!?]+\", text)\n                ^^\nNameError: name 're' is not defined\n"
+  },
+  "py_files": 3,
+  "tests": [
+    {
+      "test": "test_tokenize_example",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_tokenize_strips_edge_apostrophes",
+      "passed": false,
+      "reason": "AssertionError: assert ['quoted', 'w..., '', 'alone'] == ['quoted', 'w...and', 'alone']"
+    },
+    {
+      "test": "test_word_frequencies",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_top_words_tie_break_alphabetical",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_average_word_length",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_sentence_count",
+      "passed": false,
+      "reason": "NameError: name 're' is not defined"
+    },
+    {
+      "test": "test_cli_end_to_end",
+      "passed": false,
+      "reason": "AssertionError: Traceback (most recent call last):"
+    }
+  ],
+  "variant": "baseline",
+  "wall_seconds": 90.0
+}

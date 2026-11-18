@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 from typing import Optional, Tuple
 
+import config
 from core.llm_client import LLMClient
 from core.context import ContextAssembler, FileRegistryBuilder
 from core.runner import Runner, ErrorParser
@@ -153,17 +154,29 @@ class Fixer:
         )
 
         # 4. Agentic Loop with retry tracking
-        max_iterations = 30
+        # Each iteration appends to the prompt, so a long loop overflows the
+        # context window; keep it bounded (configurable).
+        max_iterations = getattr(config, "FIXER_MAX_ITERATIONS", 8)
         current_prompt = ctx["prompt"]
         system_prompt = ctx["system"]
         fixed_files_list = []
         brief_plan = "Fixed bugs."
         # Track SEARCH/REPLACE failures per file to escalate to full rewrite
         search_fail_counts = {}
-        MAX_SEARCH_FAILURES = 15
+        MAX_SEARCH_FAILURES = getattr(config, "FIXER_MAX_SEARCH_FAILURES", 3)
+
+        # The transcript is appended to every turn; once it passes this budget it
+        # is compacted to a fresh prompt (current file content + error) plus the
+        # most recent turns, so no call ever approaches the context window.
+        prompt_budget = getattr(config, "FIXER_PROMPT_BUDGET_CHARS", 20000)
+        base_len = len(current_prompt)
 
         for iteration in range(max_iterations):
             log.info("Fixer: agent loop iteration %d/%d", iteration + 1, max_iterations)
+            if len(current_prompt) > prompt_budget:
+                current_prompt, base_len = self._compact_prompt(
+                    current_prompt, base_len, target_file, full_target, error_text, prompt_budget
+                )
             chunks = []
 
             try:
@@ -231,6 +244,10 @@ class Fixer:
                 system_reply = "SYSTEM:\n"
                 for m in run_matches:
                     cmd = m.group(1).strip()
+                    # Skip prose that merely mentions the tag, e.g.
+                    # "use the `<run_command>` tag to run ... </run_command>".
+                    if not cmd or "`" in cmd or "\n" in cmd:
+                        continue
                     system_reply += f"--- Running: {cmd} ---\n"
                     # Execute shell command securely
                     result = await self.runner.run_shell_command(cmd)
@@ -481,6 +498,36 @@ class Fixer:
             return False, "Agent loop completed without applying any successful edits.", []
 
         return True, f"Successfully applied fixes to: {', '.join(fixed_files_list)}", fixed_files_list
+
+    def _compact_prompt(self, current_prompt: str, base_len: int, target_file: str,
+                        full_target: Path, error_text: str, budget: int) -> Tuple[str, int]:
+        """Shrink an over-budget fixer transcript.
+
+        Rebuilds the base prompt with the file's CURRENT content (earlier edits
+        may have changed it) and keeps only the newest turns that fit the
+        remaining budget, cut at a turn boundary.
+        """
+        try:
+            content = full_target.read_text(encoding="utf-8") if full_target.exists() else ""
+        except Exception:
+            content = ""
+        fresh = self.assembler.build_fixer_prompt(
+            file_path=target_file, file_content=content, error_text=error_text,
+        )["prompt"]
+        history = current_prompt[base_len:]
+        keep = max(2000, budget - len(fresh) - 200)
+        tail = history[-keep:]
+        cut = tail.find("\n\nASSISTANT:")
+        if 0 < cut < len(tail) // 2:
+            tail = tail[cut:]
+        log.info("Fixer: compacted prompt %d -> %d chars", len(current_prompt), len(fresh) + len(tail))
+        compacted = (
+            fresh
+            + "\n\n[... earlier fix turns omitted to stay within the context window; "
+              "the file shown above is its CURRENT content ...]\n"
+            + tail
+        )
+        return compacted, len(fresh)
 
     async def _auto_install_module(self, module_name: str) -> Tuple[bool, str]:
         """Automatically pip install a missing module."""

@@ -1,0 +1,58 @@
+{
+  "task": "tic_tac_toe",
+  "tests_total": 8,
+  "tests_passed": 4,
+  "pass_rate": 0.5,
+  "all_passed": false,
+  "smoke": {
+    "ran": true,
+    "crashed": true,
+    "exit_code": 1,
+    "stderr_tail": "e \"D:\\Documents\\L&T\\Context-agent-dev\\benchmarks\\results\\main\\baseline\\tic_tac_toe\\workspace\\main.py\", line 35, in <module>\n    main()\n  File \"D:\\Documents\\L&T\\Context-agent-dev\\benchmarks\\results\\main\\baseline\\tic_tac_toe\\workspace\\main.py\", line 13, in main\n    board = board.Board()\n            ^^^^^\nUnboundLocalError: cannot access local variable 'board' where it is not associated with a value\n"
+  },
+  "py_files": 3,
+  "tests": [
+    {
+      "test": "test_turn_order_and_invalid_moves",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_winner_detection_rows_cols_diagonals",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_full_board_and_available_moves",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_no_moves_after_game_over",
+      "passed": false,
+      "reason": "Failed: DID NOT RAISE <class 'ValueError'>"
+    },
+    {
+      "test": "test_copy_is_independent",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_ai_takes_win_and_blocks",
+      "passed": false,
+      "reason": "assert 2 == 5"
+    },
+    {
+      "test": "test_ai_never_loses_against_every_x_strategy",
+      "passed": false,
+      "reason": "AssertionError: assert 'X' != 'X'"
+    },
+    {
+      "test": "test_cli_game_ends_without_x_winning",
+      "passed": false,
+      "reason": "AssertionError: Traceback (most recent call last):"
+    }
+  ],
+  "variant": "baseline",
+  "wall_seconds": 158.7
+}

@@ -45,8 +45,8 @@ CRITICAL INSTRUCTIONS:
             try:
                 # Fetch all files and the symbols they contain
                 query = """
-                MATCH (f:File)
-                OPTIONAL MATCH (f)-[:CONTAINS]->(s:Symbol)
+                MATCH (f:File {project: $project})
+                OPTIONAL MATCH (f)-[:CONTAINS]->(s:Symbol {project: $project})
                 RETURN f.path AS path, collect(s.name) AS symbols
                 LIMIT 200
                 """

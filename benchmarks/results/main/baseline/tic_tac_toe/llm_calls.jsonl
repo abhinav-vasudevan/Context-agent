@@ -1,0 +1,1 @@
+{"task": "tic_tac_toe", "variant": "baseline", "provider": "Ollama", "model": "llama3.1-bench:8b", "prompt_chars": 1463, "system_chars": 501, "component": "baseline", "t_start": 1794972713.7854946, "input_chars": 1964, "est_input_tokens": 546, "prompt_tokens": 486, "completion_tokens": 753, "seconds": 158.4}

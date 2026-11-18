@@ -1,0 +1,48 @@
+{
+  "task": "gradebook",
+  "tests_total": 6,
+  "tests_passed": 2,
+  "pass_rate": 0.3333,
+  "all_passed": false,
+  "smoke": {
+    "ran": true,
+    "crashed": false,
+    "exit_code": 0,
+    "stderr_tail": ""
+  },
+  "py_files": 4,
+  "tests": [
+    {
+      "test": "test_letter_grade_boundaries",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_validation",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_averages",
+      "passed": false,
+      "reason": "ZeroDivisionError: division by zero"
+    },
+    {
+      "test": "test_ranking_ties_and_excludes_ungraded",
+      "passed": false,
+      "reason": "ZeroDivisionError: division by zero"
+    },
+    {
+      "test": "test_csv_roundtrip",
+      "passed": false,
+      "reason": "KeyError: \"Unknown student 'alice'.\""
+    },
+    {
+      "test": "test_cli_end_to_end",
+      "passed": false,
+      "reason": "AssertionError: assert '1. alice 91.5 A' in []"
+    }
+  ],
+  "variant": "agent",
+  "wall_seconds": 1015.4
+}

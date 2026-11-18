@@ -1,0 +1,58 @@
+{
+  "task": "inventory_system",
+  "tests_total": 8,
+  "tests_passed": 6,
+  "pass_rate": 0.75,
+  "all_passed": false,
+  "smoke": {
+    "ran": true,
+    "crashed": false,
+    "exit_code": 0,
+    "stderr_tail": ""
+  },
+  "py_files": 4,
+  "tests": [
+    {
+      "test": "test_product_validation",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_duplicate_sku_rejected",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_restock_and_errors",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_sell_returns_amount_and_reduces_stock",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_oversell_rejected_and_stock_unchanged",
+      "passed": false,
+      "reason": "Failed: DID NOT RAISE <class 'ValueError'>"
+    },
+    {
+      "test": "test_total_value_and_low_stock",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_format_report",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_cli_end_to_end",
+      "passed": false,
+      "reason": "assert 'Sold: 10.00' in \"Error: 'Unknown SKU'\\nSold: 0.00\\nB2 | stapler | 3 | 7.00\\nTOTAL: 21.00\\n\""
+    }
+  ],
+  "variant": "baseline",
+  "wall_seconds": 186.4
+}

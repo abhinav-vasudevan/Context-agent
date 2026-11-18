@@ -1,0 +1,18 @@
+{
+  "preflight": {
+    "ollama": "running",
+    "neo4j": "NOT running (knowledge graph features will be off)",
+    "free_ram_gb": 2.3
+  },
+  "model": "llama3.1-bench:8b",
+  "base_model": "llama3.1:8b",
+  "num_thread": 8,
+  "config_overrides": {
+    "MAX_FIX_ATTEMPTS": 4,
+    "MAX_QA_ATTEMPTS": 2,
+    "MAX_QA_INTERACTIONS": 8,
+    "QA_PROCESS_TIMEOUT": 120,
+    "PROCESS_RUN_TIMEOUT": 120
+  },
+  "started": "2026-11-16 20:04:33"
+}

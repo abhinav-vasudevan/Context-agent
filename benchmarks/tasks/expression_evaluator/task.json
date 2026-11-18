@@ -1,0 +1,7 @@
+{
+  "id": "expression_evaluator",
+  "title": "Arithmetic expression evaluator with a REPL",
+  "category": "parsing / algorithms",
+  "prompt": "Build an arithmetic expression evaluator in Python. Do NOT use eval() or exec().\n\nModules:\n- lexer.py: `tokenize(expr) -> list[str]`. Splits an expression into tokens: numbers (integers or decimals such as `3.5`), the operators `+ - * / ^` and parentheses `( )`. Whitespace is ignored. Raises `ValueError` on any other character. Example: `tokenize(\"2*(3+4.5)\")` returns `[\"2\", \"*\", \"(\", \"3\", \"+\", \"4.5\", \")\"]`.\n- evaluator.py: `evaluate(expr) -> float`.\n  - Precedence: `^` (power, right-associative) binds tighter than `*` and `/`, which bind tighter than `+` and `-` (left-associative).\n  - Supports unary minus, e.g. `-3 + 5` is 2 and `2 * -3` is -6.\n  - Supports parentheses.\n  - Raises `ZeroDivisionError` when dividing by zero.\n  - Raises `ValueError` for malformed expressions such as `2 +`, `(1 + 2` or an empty string.\n- main.py: a REPL. Read expressions from standard input, one per line, until `quit` or end of input. For each line print the result: whole numbers without a decimal part (`14`, not `14.0`), other numbers rounded to at most 6 decimal places with trailing zeros removed (`0.5`, `3.333333`). On any error print a line starting with `Error:` and continue.\n\nConstraints: use only the Python standard library. The entry point is main.py in the project root, guarded by `if __name__ == \"__main__\":`.",
+  "smoke_stdin": "1 + 2\nquit\n"
+}

@@ -2,14 +2,24 @@
 Knowledge Graph — Neo4j-backed graph of project architecture.
 
 Stores:
-  - Nodes: Subsystem, Service, Module, File, Class, Function
-  - Edges: OWNS, USES, IMPLEMENTS, DEPENDS_ON, IMPORTS
+  - Nodes: Project, Subsystem, Service, File, Symbol
+  - Edges: OWNS, USES, IMPLEMENTS, DEPENDS_ON, IMPORTS, CONTAINS
 
 This is the primary mechanism for "file 78 knowing about file 2"
 without both ever appearing in the same LLM context window.
 
 The graph is persisted in Neo4j and queried at context assembly time
 to retrieve only the relevant subgraph for the current task.
+
+Project isolation
+-----------------
+All projects share one Neo4j database, so every node carries a ``project``
+property (the KnowledgeGraph's ``project`` key — the workspace path) and is
+MERGEd on ``(project, key)``. Every read and write is filtered by it, so a
+"Frontend" subsystem or a ``src/main.py`` in one project is a different node
+from the same name in another project. Raw queries passed to
+``execute_query`` automatically receive a ``$project`` parameter and MUST
+filter on it.
 """
 
 from __future__ import annotations
@@ -27,12 +37,21 @@ except ImportError as e:
     log.warning(f"neo4j driver not installed. Run: pip install neo4j. Error: {e}")
 
 
+def _key_field(label: str) -> str:
+    """The property that uniquely identifies a node of this label within a project."""
+    if label == "File":
+        return "path"
+    if label == "Symbol":
+        return "id"
+    return "name"
+
+
 class KnowledgeGraph:
     """
-    Neo4j-backed Knowledge Graph for the Project Brain.
+    Neo4j-backed Knowledge Graph for the Project Brain, scoped to one project.
 
     Node types:
-      - Project, Subsystem, Service, Module, File, Class, Function
+      - Project, Subsystem, Service, File, Symbol
 
     Edge types:
       - OWNS (parent -> child in the hierarchy)
@@ -40,6 +59,7 @@ class KnowledgeGraph:
       - IMPLEMENTS (a File implements a Service contract)
       - DEPENDS_ON (import-level dependency between files)
       - IMPORTS (specific import statement)
+      - CONTAINS (File -> Symbol)
     """
 
     def __init__(
@@ -48,19 +68,24 @@ class KnowledgeGraph:
         user: str = "neo4j",
         password: str = "password",
         database: str = "neo4j",
+        project: str = "",
     ):
         self.uri = uri
         self.user = user
         self.password = password
         self.database = database
+        self.project = project
         self._driver = None
+
+        if not project:
+            log.warning("KnowledgeGraph created without a project key; data will not be isolated.")
 
         if HAS_NEO4J:
             try:
                 self._driver = GraphDatabase.driver(uri, auth=(user, password))
                 # Verify connectivity
                 self._driver.verify_connectivity()
-                log.info("Connected to Neo4j at %s", uri)
+                log.info("Connected to Neo4j at %s (project=%s)", uri, project)
                 self._ensure_indexes()
             except Exception as e:
                 log.warning("Neo4j connection failed: %s. Graph features disabled.", e)
@@ -79,14 +104,24 @@ class KnowledgeGraph:
             self._driver.close()
             self._driver = None
 
+    def _run(self, query: str, **params) -> List[Dict[str, Any]]:
+        """Run a query with ``$project`` bound to this graph's project."""
+        with self._driver.session(database=self.database) as session:
+            result = session.run(query, project=self.project, **params)
+            return [dict(record) for record in result]
+
     def execute_query(self, query: str, parameters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-        """Execute a raw Cypher query and return the results as a list of dicts."""
+        """
+        Execute a raw Cypher query and return the results as a list of dicts.
+
+        ``$project`` is always bound to this graph's project key; queries must
+        use it (e.g. ``MATCH (f:File {project: $project})``) to stay isolated.
+        """
         if not self._driver:
             return []
+        params = {k: v for k, v in (parameters or {}).items() if k != "project"}
         try:
-            with self._driver.session(database=self.database) as session:
-                result = session.run(query, parameters or {})
-                return [dict(record) for record in result]
+            return self._run(query, **params)
         except Exception as e:
             log.error("Failed to execute Cypher query: %s", e)
             return []
@@ -94,17 +129,12 @@ class KnowledgeGraph:
     # ── Schema Setup ──────────────────────────────────────────────────
 
     def _ensure_indexes(self):
-        """Create indexes for fast lookups."""
+        """Create (project, key) indexes for fast scoped lookups."""
         if not self._driver:
             return
         queries = [
-            "CREATE INDEX IF NOT EXISTS FOR (n:Project) ON (n.name)",
-            "CREATE INDEX IF NOT EXISTS FOR (n:Subsystem) ON (n.name)",
-            "CREATE INDEX IF NOT EXISTS FOR (n:Service) ON (n.name)",
-            "CREATE INDEX IF NOT EXISTS FOR (n:Module) ON (n.name)",
-            "CREATE INDEX IF NOT EXISTS FOR (n:File) ON (n.path)",
-            "CREATE INDEX IF NOT EXISTS FOR (n:Class) ON (n.name)",
-            "CREATE INDEX IF NOT EXISTS FOR (n:Function) ON (n.name)",
+            f"CREATE INDEX IF NOT EXISTS FOR (n:{label}) ON (n.project, n.{_key_field(label)})"
+            for label in ("Project", "Subsystem", "Service", "Module", "File", "Symbol")
         ]
         with self._driver.session(database=self.database) as session:
             for q in queries:
@@ -113,48 +143,48 @@ class KnowledgeGraph:
                 except Exception as e:
                     log.debug("Index creation note: %s", e)
 
-    def clear_project(self, project_name: str):
-        """Remove all nodes and edges for a given project."""
+    def clear_project(self, project_name: str = None):
+        """Remove all nodes and edges belonging to this graph's project.
+
+        ``project_name`` is accepted for backward compatibility and ignored —
+        isolation is by the project key, not the display name.
+        """
         if not self._driver:
             return
-        with self._driver.session(database=self.database) as session:
-            # Use directed hierarchical traversal to avoid OOM path explosion
-            session.run(
-                "MATCH (p:Project {name: $name})-[:OWNS|CONTAINS*0..]->(n) DETACH DELETE p, n",
-                name=project_name,
-            )
-            log.info("Cleared graph for project: %s", project_name)
+        self._run("MATCH (n {project: $project}) DETACH DELETE n")
+        log.info("Cleared graph for project: %s", self.project)
 
     # ── Node Operations ───────────────────────────────────────────────
 
     def add_node(self, label: str, properties: Dict[str, Any]) -> Optional[str]:
         """
-        Create or merge a node with the given label and properties.
+        Create or merge a node (within this project) with the given label and properties.
 
         Args:
-            label: Node type (Project, Subsystem, Service, Module, File, Class, Function)
-            properties: Dict of node properties (must include 'name' or 'path')
+            label: Node type (Project, Subsystem, Service, File, Symbol)
+            properties: Dict of node properties (must include the label's key:
+                        'path' for File, 'id' for Symbol, 'name' otherwise)
 
         Returns:
-            The node's identifier (name or path), or None on failure.
+            The node's identifier, or None on failure.
         """
         if not self._driver:
             return None
 
-        key_field = "path" if label == "File" else "name"
+        key_field = _key_field(label)
         key_value = properties.get(key_field, "")
         if not key_value:
             log.warning("Cannot add %s node without '%s' property", label, key_field)
             return None
 
-        # Build MERGE query dynamically
-        set_clause = ", ".join(f"n.{k} = ${k}" for k in properties.keys())
-        query = f"MERGE (n:{label} {{{key_field}: ${key_field}}}) SET {set_clause} RETURN n.{key_field} AS id"
-
-        with self._driver.session(database=self.database) as session:
-            result = session.run(query, **properties)
-            record = result.single()
-            return record["id"] if record else None
+        props = {k: v for k, v in properties.items() if k != "project"}
+        set_clause = ", ".join(f"n.{k} = $p_{k}" for k in props.keys())
+        query = (
+            f"MERGE (n:{label} {{project: $project, {key_field}: $key}}) "
+            f"SET {set_clause} RETURN n.{key_field} AS id"
+        )
+        rows = self._run(query, key=key_value, **{f"p_{k}": v for k, v in props.items()})
+        return rows[0]["id"] if rows else None
 
     def add_edge(
         self,
@@ -166,13 +196,13 @@ class KnowledgeGraph:
         properties: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
-        Create a directed edge between two nodes.
+        Create a directed edge between two nodes of this project.
 
         Args:
             from_label: Source node type
-            from_key: Source node name/path
+            from_key: Source node key (name/path/id)
             to_label: Target node type
-            to_key: Target node name/path
+            to_key: Target node key (name/path/id)
             edge_type: Relationship type (OWNS, USES, DEPENDS_ON, etc.)
             properties: Optional edge properties
 
@@ -182,25 +212,22 @@ class KnowledgeGraph:
         if not self._driver:
             return False
 
-        from_field = "path" if from_label == "File" else "name"
-        to_field = "path" if to_label == "File" else "name"
+        from_field = _key_field(from_label)
+        to_field = _key_field(to_label)
 
         props_str = ""
         params = {"from_key": from_key, "to_key": to_key}
         if properties:
-            props_str = " {" + ", ".join(f"{k}: ${k}" for k in properties.keys()) + "}"
-            params.update(properties)
+            props_str = " {" + ", ".join(f"{k}: $e_{k}" for k in properties.keys()) + "}"
+            params.update({f"e_{k}": v for k, v in properties.items()})
 
         query = (
-            f"MATCH (a:{from_label} {{{from_field}: $from_key}}) "
-            f"MATCH (b:{to_label} {{{to_field}: $to_key}}) "
+            f"MATCH (a:{from_label} {{project: $project, {from_field}: $from_key}}) "
+            f"MATCH (b:{to_label} {{project: $project, {to_field}: $to_key}}) "
             f"MERGE (a)-[r:{edge_type}{props_str}]->(b) "
             f"RETURN type(r) AS rel"
         )
-
-        with self._driver.session(database=self.database) as session:
-            result = session.run(query, **params)
-            return result.single() is not None
+        return bool(self._run(query, **params))
 
     # ── Query Operations ──────────────────────────────────────────────
 
@@ -222,58 +249,49 @@ class KnowledgeGraph:
             return []
 
         query = (
-            "MATCH (f:File {path: $path})-[r*1.." + str(depth) + "]-(related:File) "
+            "MATCH (f:File {project: $project, path: $path})-[r*1.." + str(int(depth)) + "]-"
+            "(related:File {project: $project}) "
             "RETURN DISTINCT related.path AS path, related.purpose AS purpose, "
             "[rel IN r | type(rel)] AS relationships"
         )
-
-        with self._driver.session(database=self.database) as session:
-            result = session.run(query, path=file_path)
-            return [dict(record) for record in result]
+        return self._run(query, path=file_path)
 
     def get_subsystem_for_file(self, file_path: str) -> Optional[Dict[str, Any]]:
-        """Find the subsystem that owns a given file (via Service → Module → File chain)."""
+        """Find the subsystem that owns a given file (via Service → File chain)."""
         if not self._driver:
             return None
 
-        query = (
-            "MATCH (sub:Subsystem)-[:OWNS*]->(f:File {path: $path}) "
+        rows = self._run(
+            "MATCH (sub:Subsystem {project: $project})-[:OWNS*]->(f:File {project: $project, path: $path}) "
             "RETURN sub.name AS name, sub.purpose AS purpose, sub.description AS description "
-            "LIMIT 1"
+            "LIMIT 1",
+            path=file_path,
         )
-
-        with self._driver.session(database=self.database) as session:
-            result = session.run(query, path=file_path)
-            record = result.single()
-            return dict(record) if record else None
+        return rows[0] if rows else None
 
     def get_files_in_subsystem(self, subsystem_name: str) -> List[str]:
         """Get all file paths owned by a subsystem."""
         if not self._driver:
             return []
 
-        query = (
-            "MATCH (sub:Subsystem {name: $name})-[:OWNS*]->(f:File) "
-            "RETURN f.path AS path ORDER BY f.path"
+        rows = self._run(
+            "MATCH (sub:Subsystem {project: $project, name: $name})-[:OWNS*]->(f:File {project: $project}) "
+            "RETURN DISTINCT f.path AS path ORDER BY path",
+            name=subsystem_name,
         )
-
-        with self._driver.session(database=self.database) as session:
-            result = session.run(query, name=subsystem_name)
-            return [record["path"] for record in result]
+        return [r["path"] for r in rows]
 
     def get_dependency_chain(self, file_path: str) -> List[str]:
         """Get the ordered list of files that must exist before this file can be built."""
         if not self._driver:
             return []
 
-        query = (
-            "MATCH (f:File {path: $path})-[:DEPENDS_ON*]->(dep:File) "
-            "RETURN DISTINCT dep.path AS path"
+        rows = self._run(
+            "MATCH (f:File {project: $project, path: $path})-[:DEPENDS_ON*]->(dep:File {project: $project}) "
+            "RETURN DISTINCT dep.path AS path",
+            path=file_path,
         )
-
-        with self._driver.session(database=self.database) as session:
-            result = session.run(query, path=file_path)
-            return [record["path"] for record in result]
+        return [r["path"] for r in rows]
 
     def get_impact_analysis(self, file_path: str) -> Dict[str, List[str]]:
         """
@@ -282,46 +300,44 @@ class KnowledgeGraph:
         Returns:
             Dict with keys: affected_files, affected_services, affected_subsystems, affected_tests
         """
-        if not self._driver:
-            return {"affected_files": [], "affected_services": [], "affected_subsystems": [], "affected_tests": []}
-
         result = {
             "affected_files": [],
             "affected_services": [],
             "affected_subsystems": [],
             "affected_tests": [],
         }
+        if not self._driver:
+            return result
 
-        with self._driver.session(database=self.database) as session:
-            # Files that depend on this file
-            r = session.run(
-                "MATCH (dep:File)-[:DEPENDS_ON|IMPORTS*]->(f:File {path: $path}) "
-                "RETURN DISTINCT dep.path AS path",
-                path=file_path,
-            )
-            result["affected_files"] = [rec["path"] for rec in r]
+        # Files that depend on this file
+        rows = self._run(
+            "MATCH (dep:File {project: $project})-[:DEPENDS_ON|IMPORTS*]->(f:File {project: $project, path: $path}) "
+            "RETURN DISTINCT dep.path AS path",
+            path=file_path,
+        )
+        result["affected_files"] = [r["path"] for r in rows]
 
-            # Services that own this file
-            r = session.run(
-                "MATCH (svc:Service)-[:OWNS*]->(f:File {path: $path}) "
-                "RETURN DISTINCT svc.name AS name",
-                path=file_path,
-            )
-            result["affected_services"] = [rec["name"] for rec in r]
+        # Services that own this file
+        rows = self._run(
+            "MATCH (svc:Service {project: $project})-[:OWNS*]->(f:File {project: $project, path: $path}) "
+            "RETURN DISTINCT svc.name AS name",
+            path=file_path,
+        )
+        result["affected_services"] = [r["name"] for r in rows]
 
-            # Subsystems
-            r = session.run(
-                "MATCH (sub:Subsystem)-[:OWNS*]->(f:File {path: $path}) "
-                "RETURN DISTINCT sub.name AS name",
-                path=file_path,
-            )
-            result["affected_subsystems"] = [rec["name"] for rec in r]
+        # Subsystems
+        rows = self._run(
+            "MATCH (sub:Subsystem {project: $project})-[:OWNS*]->(f:File {project: $project, path: $path}) "
+            "RETURN DISTINCT sub.name AS name",
+            path=file_path,
+        )
+        result["affected_subsystems"] = [r["name"] for r in rows]
 
         return result
 
     def get_architecture_overview(self) -> List[Dict[str, Any]]:
         """
-        Get a high-level overview of the entire project architecture.
+        Get a high-level overview of this project's architecture.
 
         Returns a list of subsystems with their services and file counts.
         Used to build the architecture context for the LLM prompt.
@@ -329,65 +345,49 @@ class KnowledgeGraph:
         if not self._driver:
             return []
 
-        query = (
-            "MATCH (sub:Subsystem) "
-            "OPTIONAL MATCH (sub)-[:OWNS]->(svc:Service) "
-            "OPTIONAL MATCH (svc)-[:OWNS*]->(f:File) "
+        return self._run(
+            "MATCH (sub:Subsystem {project: $project}) "
+            "OPTIONAL MATCH (sub)-[:OWNS]->(svc:Service {project: $project}) "
+            "OPTIONAL MATCH (svc)-[:OWNS*]->(f:File {project: $project}) "
             "RETURN sub.name AS subsystem, sub.purpose AS purpose, "
             "collect(DISTINCT svc.name) AS services, "
             "count(DISTINCT f) AS file_count "
-            "ORDER BY sub.name"
+            "ORDER BY subsystem"
         )
 
-        with self._driver.session(database=self.database) as session:
-            result = session.run(query)
-            return [dict(record) for record in result]
-
     def get_graph_data(self, project_name: str = None) -> Dict[str, Any]:
-        """Get raw nodes and links for visualization. If project_name is provided, filters to that project."""
+        """Get this project's raw nodes and links for visualization.
+
+        ``project_name`` is accepted for backward compatibility and ignored —
+        results are always scoped to this graph's project key.
+        """
         if not self._driver:
             return {"nodes": [], "links": []}
 
-        nodes = []
-        links = []
-        with self._driver.session(database=self.database) as session:
-            # Get nodes
-            if project_name:
-                n_query = "MATCH (p:Project {name: $name})-[:OWNS|CONTAINS*0..]->(n) RETURN DISTINCT elementId(n) as node_id, labels(n) as labels, properties(n) as props"
-                n_result = session.run(n_query, name=project_name)
-            else:
-                n_result = session.run("MATCH (n) RETURN elementId(n) as node_id, labels(n) as labels, properties(n) as props")
+        def node_id(props: Dict[str, Any], fallback: str) -> str:
+            return props.get("name", props.get("path", props.get("id", fallback)))
 
-            for record in n_result:
-                props = record["props"]
-                node_name = props.get("name", props.get("path", str(record["node_id"])))
-                nodes.append({
-                    "id": node_name,
-                    "labels": record["labels"],
-                    "properties": props
-                })
-
-            # Get edges
-            if project_name:
-                e_query = """
-                MATCH (p:Project {name: $name})-[:OWNS|CONTAINS*0..]->(a)
-                MATCH (p)-[:OWNS|CONTAINS*0..]->(b)
-                MATCH (a)-[r]->(b)
-                RETURN properties(a) as a_props, type(r) as type, properties(b) as b_props, elementId(a) as aid, elementId(b) as bid
-                """
-                e_result = session.run(e_query, name=project_name)
-            else:
-                e_result = session.run("MATCH (a)-[r]->(b) RETURN properties(a) as a_props, type(r) as type, properties(b) as b_props, elementId(a) as aid, elementId(b) as bid")
-
-            for record in e_result:
-                a_props = record["a_props"]
-                b_props = record["b_props"]
-                source_id = a_props.get("name", a_props.get("path", str(record["aid"])))
-                target_id = b_props.get("name", b_props.get("path", str(record["bid"])))
-                links.append({
-                    "source": source_id,
-                    "target": target_id,
-                    "type": record["type"]
-                })
-
+        nodes = [
+            {
+                "id": node_id(r["props"], str(r["node_id"])),
+                "labels": r["labels"],
+                "properties": r["props"],
+            }
+            for r in self._run(
+                "MATCH (n {project: $project}) "
+                "RETURN elementId(n) AS node_id, labels(n) AS labels, properties(n) AS props"
+            )
+        ]
+        links = [
+            {
+                "source": node_id(r["a_props"], str(r["aid"])),
+                "target": node_id(r["b_props"], str(r["bid"])),
+                "type": r["type"],
+            }
+            for r in self._run(
+                "MATCH (a {project: $project})-[r]->(b {project: $project}) "
+                "RETURN properties(a) AS a_props, type(r) AS type, properties(b) AS b_props, "
+                "elementId(a) AS aid, elementId(b) AS bid"
+            )
+        ]
         return {"nodes": nodes, "links": links}

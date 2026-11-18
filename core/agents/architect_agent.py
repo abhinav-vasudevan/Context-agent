@@ -26,7 +26,8 @@ CRITICAL INSTRUCTIONS:
    - Constants or global variables if mentioned in the description
 3. Skeletons MUST NOT contain any implementation logic.
    - Use `pass` or `raise NotImplementedError("Stub - to be implemented")` for all bodies.
-4. DO NOT invent classes or functions that aren't strongly implied by the module description or dependencies.
+4. DO NOT invent classes or functions that aren't strongly implied by the module description, dependencies or the project specification.
+   When a PROJECT SPECIFICATION is given, use its EXACT class, function, method, exception and constant names and signatures.
 5. You MUST output ONLY a valid JSON object matching this schema:
 {
   "stubs": {
@@ -44,10 +45,13 @@ DO NOT use <think> tags. DO NOT output markdown outside the JSON.
         self,
         sprint_modules: List[ModuleSpec],
         on_token: Optional[Callable] = None,
-        on_thinking: Optional[Callable] = None
+        on_thinking: Optional[Callable] = None,
+        project_spec: str = "",
     ) -> Dict[str, str]:
         """
         Generate skeleton code for a list of modules.
+        `project_spec` is the user's original request; a bounded excerpt is
+        included so stub names match what the user specified.
         Returns a dict mapping file_path to the stub code.
         """
         if not sprint_modules:
@@ -63,7 +67,12 @@ DO NOT use <think> tags. DO NOT output markdown outside the JSON.
                 desc += f"\n  Expected Exports: {', '.join(mod.exports)}"
             module_descriptions.append(desc)
 
-        user_prompt = "Generate stubs for the following modules:\n\n" + "\n\n".join(module_descriptions)
+        user_prompt = ""
+        if project_spec:
+            from core.context import spec_excerpt
+            focus = " ".join(f"{m.file_path} {m.description}" for m in sprint_modules)
+            user_prompt += f"PROJECT SPECIFICATION (from the user):\n{spec_excerpt(project_spec, focus=focus)}\n\n"
+        user_prompt += "Generate stubs for the following modules:\n\n" + "\n\n".join(module_descriptions)
 
         chunks = []
         async for chunk in self.llm.generate_stream(

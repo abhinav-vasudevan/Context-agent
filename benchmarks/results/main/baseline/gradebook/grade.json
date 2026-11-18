@@ -1,0 +1,48 @@
+{
+  "task": "gradebook",
+  "tests_total": 6,
+  "tests_passed": 4,
+  "pass_rate": 0.6667,
+  "all_passed": false,
+  "smoke": {
+    "ran": true,
+    "crashed": true,
+    "exit_code": 1,
+    "stderr_tail": ":\\Documents\\L&T\\Context-agent-dev\\benchmarks\\results\\main\\baseline\\gradebook\\workspace\\main.py\", line 48, in <module>\n    main()\n  File \"D:\\Documents\\L&T\\Context-agent-dev\\benchmarks\\results\\main\\baseline\\gradebook\\workspace\\main.py\", line 30, in main\n    letter = gradebook.letter_grade(average)\n             ^^^^^^^^^^^^^^^^^^^^^^\nAttributeError: 'GradeBook' object has no attribute 'letter_grade'\n"
+  },
+  "py_files": 3,
+  "tests": [
+    {
+      "test": "test_letter_grade_boundaries",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_validation",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_averages",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_ranking_ties_and_excludes_ungraded",
+      "passed": true,
+      "reason": ""
+    },
+    {
+      "test": "test_csv_roundtrip",
+      "passed": false,
+      "reason": "AttributeError: 'GradeBook' object has no attribute 'to_csv'"
+    },
+    {
+      "test": "test_cli_end_to_end",
+      "passed": false,
+      "reason": "AssertionError: Traceback (most recent call last):"
+    }
+  ],
+  "variant": "baseline",
+  "wall_seconds": 183.5
+}

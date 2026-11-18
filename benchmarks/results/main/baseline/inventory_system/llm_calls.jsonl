@@ -1,0 +1,1 @@
+{"task": "inventory_system", "variant": "baseline", "provider": "Ollama", "model": "llama3.1-bench:8b", "prompt_chars": 1629, "system_chars": 501, "component": "baseline", "t_start": 1794960932.812524, "input_chars": 2130, "est_input_tokens": 592, "prompt_tokens": 546, "completion_tokens": 907, "seconds": 186.1}

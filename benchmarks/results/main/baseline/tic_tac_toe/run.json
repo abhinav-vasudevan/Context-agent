@@ -1,0 +1,14 @@
+{
+  "task": "tic_tac_toe",
+  "variant": "baseline",
+  "model": "llama3.1-bench:8b",
+  "phase": "done",
+  "files_written": [
+    "ai.py",
+    "board.py",
+    "main.py"
+  ],
+  "execute_success": true,
+  "seconds": 158.7,
+  "llm_calls": 1
+}

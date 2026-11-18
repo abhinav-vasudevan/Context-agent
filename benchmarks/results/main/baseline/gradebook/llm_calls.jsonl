@@ -1,0 +1,1 @@
+{"task": "gradebook", "variant": "baseline", "provider": "Ollama", "model": "llama3.1-bench:8b", "prompt_chars": 1610, "system_chars": 501, "component": "baseline", "t_start": 1794959515.1536663, "input_chars": 2111, "est_input_tokens": 586, "prompt_tokens": 548, "completion_tokens": 900, "seconds": 183.3}

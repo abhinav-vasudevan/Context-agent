@@ -1,0 +1,14 @@
+{
+  "task": "bank_system",
+  "variant": "baseline",
+  "model": "llama3.1-bench:8b",
+  "phase": "done",
+  "files_written": [
+    "accounts.py",
+    "bank.py",
+    "main.py"
+  ],
+  "execute_success": true,
+  "seconds": 200.9,
+  "llm_calls": 1
+}

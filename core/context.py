@@ -32,6 +32,49 @@ log = logging.getLogger(__name__)
 _PY_39_PLUS = sys.version_info >= (3, 9)
 
 
+def spec_excerpt(spec: str, focus: str = "", max_chars: Optional[int] = None) -> str:
+    """
+    Return the part of the user's original specification that a single
+    generation call should see, bounded to `max_chars`.
+
+    Short specs are returned whole. For long specs, paragraphs are ranked by how
+    many focus keywords (file name stem, step description words) they mention;
+    the opening paragraph is always kept, then the best-matching paragraphs are
+    added in their original order until the budget is used. This keeps exact
+    names from the spec (classes, functions, exceptions) visible to the coder
+    without ever blowing the context window.
+    """
+    spec = (spec or "").strip()
+    if max_chars is None:
+        max_chars = getattr(config, "SPEC_EXCERPT_CHARS", 6000)
+    if len(spec) <= max_chars:
+        return spec
+
+    paras = [p for p in re.split(r"\n\s*\n", spec) if p.strip()]
+    words = {w.lower() for w in re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", focus)}
+    stop = {"the", "and", "for", "with", "module", "file", "this", "that", "from", "into"}
+    words -= stop
+
+    def score(p: str) -> int:
+        low = p.lower()
+        return sum(low.count(w) for w in words)
+
+    chosen = {0}
+    used = len(paras[0])
+    for idx in sorted(range(1, len(paras)), key=lambda i: -score(paras[i])):
+        if score(paras[idx]) == 0:
+            break
+        if used + len(paras[idx]) + 2 > max_chars:
+            continue
+        chosen.add(idx)
+        used += len(paras[idx]) + 2
+
+    out = "\n\n".join(paras[i] for i in sorted(chosen))
+    if len(out) > max_chars:
+        out = out[:max_chars]
+    return out + "\n\n[... other parts of the specification omitted ...]"
+
+
 class FileRegistryBuilder:
     """
     Parses Python files using the `ast` module to extract concrete
@@ -561,13 +604,13 @@ Output ONLY the one-sentence summary, nothing else."""
         if self.brain and getattr(self.brain, "graph", None) and self.brain.graph.is_available:
             try:
                 # Query Neo4j for files connected to this step's file
-                query = f"""
-                MATCH (f:File)-[*1..2]-(other_f:File)
-                WHERE f.path CONTAINS '{Path(step.file_path).name}'
+                query = """
+                MATCH (f:File {project: $project})-[*1..2]-(other_f:File {project: $project})
+                WHERE f.path CONTAINS $name
                 RETURN DISTINCT other_f.path AS related_file
                 LIMIT 15
                 """
-                records = self.brain.graph.execute_query(query)
+                records = self.brain.graph.execute_query(query, {"name": Path(step.file_path).name})
                 if records:
                     related_paths = [r["related_file"] for r in records]
                     filtered_registry = []
@@ -688,13 +731,13 @@ Output ONLY the one-sentence summary, nothing else."""
         registry_str = self.state.get_file_registry_string()
         if self.brain and getattr(self.brain, "graph", None) and self.brain.graph.is_available:
             try:
-                query = f"""
-                MATCH (f:File)-[*1..2]-(other_f:File)
-                WHERE f.path CONTAINS '{Path(file_path).name}'
+                query = """
+                MATCH (f:File {project: $project})-[*1..2]-(other_f:File {project: $project})
+                WHERE f.path CONTAINS $name
                 RETURN DISTINCT other_f.path AS related_file
                 LIMIT 15
                 """
-                records = self.brain.graph.execute_query(query)
+                records = self.brain.graph.execute_query(query, {"name": Path(file_path).name})
                 if records:
                     related_paths = [r["related_file"] for r in records]
                     filtered_registry = []
@@ -714,6 +757,18 @@ Output ONLY the one-sentence summary, nothing else."""
 
         # The error
         parts.append(f"ERROR:\n{error_text}")
+
+        # The user's original spec, so a fix restores the names/behaviour the
+        # user asked for instead of inventing new ones (bounded excerpt).
+        spec = spec_excerpt(
+            getattr(self.state, "original_prompt", "") or "",
+            focus=f"{Path(file_path).stem} {error_text[:500]}",
+            max_chars=min(3000, getattr(config, "SPEC_EXCERPT_CHARS", 6000)),
+        )
+        if spec:
+            parts.append(
+                "PROJECT SPECIFICATION (from the user — keep the code consistent with it):\n" + spec
+            )
 
         # Fix History (Memory)
         if self.state.fix_history:

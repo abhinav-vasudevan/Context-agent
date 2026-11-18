@@ -1,0 +1,59 @@
+{
+  "run": "smoke2",
+  "chars_per_token": 3.98,
+  "variants": {
+    "agent": {
+      "tasks": 1,
+      "tests_passed": 2,
+      "tests_total": 8,
+      "test_pass_rate": 25.0,
+      "mean_task_pass_rate": 25.0,
+      "tasks_fully_passing": 0,
+      "programs_running": 1,
+      "pipeline_completed": 0,
+      "mean_minutes": 797.8,
+      "llm_calls": 13,
+      "calls_by_component": {
+        "fixer": 8,
+        "planner": 3,
+        "scaffolding": 1,
+        "coder": 1
+      },
+      "context": {
+        "max_call_input_tokens": 10309,
+        "median_call_input_tokens": 2883,
+        "p95_call_input_tokens": 7507,
+        "calls_over_window": 0,
+        "max_task_total_input": 43583,
+        "max_project_tokens": 729,
+        "total_output_tokens": 8870
+      },
+      "self_healing": {
+        "repair_events": 0,
+        "verifiable": 0,
+        "verified_fixed": 0,
+        "verified_fix_rate": 0.0,
+        "mean_attempts": 0,
+        "auto_installs": 0,
+        "by_category": {}
+      },
+      "per_task": [
+        {
+          "task": "bank_system",
+          "pass": "2/8",
+          "pass_rate": 0.25,
+          "runs": true,
+          "phase": "timeout",
+          "steps": "0/5",
+          "minutes": 797.8,
+          "llm_calls": 13,
+          "max_call_input": 10309,
+          "total_input_processed": 43583,
+          "total_output": 8870,
+          "project_tokens": 729,
+          "project_files": 5
+        }
+      ]
+    }
+  }
+}

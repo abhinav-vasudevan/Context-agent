@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from core.llm_client import LLMClient
-from core.context import ContextAssembler, FileRegistryBuilder
+from core.context import ContextAssembler, FileRegistryBuilder, spec_excerpt
 from core.runner import Runner
 from models.state import ProjectState, PlanStep, FileEntry
 
@@ -54,11 +54,28 @@ class Coder:
 
         system_prompt = "You are an elite Software Engineer. You must output the entire file content. Never use placeholders like '# ...' or '// ...'."
 
-        prompt = f"TASK:\n{step.description}\n\nFILE PATH:\n{step.file_path}\n\nCONTEXT:\n{context_text}\n\n"
+        # The planner condenses the request to one line per file, so the coder
+        # also gets the user's original specification (bounded excerpt). Without
+        # it the coder invents its own class/function names and the files don't
+        # match what the user asked for or each other.
+        spec = spec_excerpt(
+            getattr(self.state, "original_prompt", "") or "",
+            focus=f"{Path(step.file_path).stem} {step.title} {step.description}",
+        )
+        prompt = ""
+        if spec:
+            prompt += (
+                "PROJECT SPECIFICATION (from the user — follow it exactly; use the EXACT "
+                "class, function, method, exception and constant names and signatures it gives):\n"
+                f"{spec}\n\n"
+            )
+        prompt += f"TASK:\n{step.description}\n\nFILE PATH:\n{step.file_path}\n\nCONTEXT:\n{context_text}\n\n"
 
         if stub_content:
             prompt += f"EXISTING SKELETON:\n{stub_content}\n\n"
             prompt += "Implement the actual logic inside the provided skeleton. You MUST return the complete file."
+            if spec:
+                prompt += " If the skeleton disagrees with the PROJECT SPECIFICATION, the specification wins."
         else:
             prompt += "Write the complete, runnable code for the requested file now."
 
@@ -268,10 +285,22 @@ class Coder:
         raw_output = re.sub(r'Thinking\.\.\..*?(?:\.\.\.done thinking\.|\Z)', '', raw_output, flags=re.DOTALL | re.IGNORECASE).strip()
 
         if file_path.endswith(".md") or file_path.endswith(".txt"):
-            match = re.search(r'^```(?:markdown|md|text)?\s*\n(.*?)(?:\n\s*```|\Z)', raw_output.strip(), re.DOTALL | re.IGNORECASE)
+            text = raw_output.strip()
+            # Drop a leading conversational line ("Here is the complete ... file:")
+            text = re.sub(r'^(?:Here is|Here\'s|Below is|This is|The following is|Sure)[^\n]*\n+', '', text, flags=re.IGNORECASE).strip()
+            if file_path.endswith(".txt"):
+                # Plain-text files (e.g. requirements.txt): take the fenced block
+                # wherever it appears, discarding prose before/after it.
+                match = re.search(r'```[\w-]*\s*\n(.*?)(?:\n\s*```|\Z)', text, re.DOTALL)
+                if match:
+                    return match.group(1).strip()
+                return text
+            # Markdown: only strip an OUTER wrapper fence, so inner code blocks
+            # (```bash etc.) in a README are preserved intact.
+            match = re.match(r'```(?:markdown|md|text)?\s*\n(.*?)(?:\n```\s*)?\Z', text, re.DOTALL | re.IGNORECASE)
             if match:
                 return match.group(1).strip()
-            return raw_output.strip()
+            return text
 
         # Look for code blocks with backticks (```python, ```javascript, ```jsx, etc). Allow unclosed blocks (EOF).
         lang_hint = self._get_lang_hint(file_path)

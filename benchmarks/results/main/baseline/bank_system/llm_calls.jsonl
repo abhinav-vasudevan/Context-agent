@@ -1,0 +1,1 @@
+{"task": "bank_system", "variant": "baseline", "provider": "Ollama", "model": "llama3.1-bench:8b", "prompt_chars": 1509, "system_chars": 501, "component": "baseline", "t_start": 1794946973.42101, "input_chars": 2010, "est_input_tokens": 558, "prompt_tokens": 504, "completion_tokens": 757, "seconds": 173.6}

@@ -1,0 +1,50 @@
+{
+  "task": "bank_system",
+  "variant": "agent",
+  "model": "llama3.1-bench:8b",
+  "config_overrides": {
+    "MAX_FIX_ATTEMPTS": {
+      "original": 999999,
+      "benchmark": 4
+    },
+    "MAX_QA_ATTEMPTS": {
+      "original": 10,
+      "benchmark": 2
+    },
+    "MAX_QA_INTERACTIONS": {
+      "original": 20,
+      "benchmark": 8
+    },
+    "QA_PROCESS_TIMEOUT": {
+      "original": 1000,
+      "benchmark": 120
+    },
+    "PROCESS_RUN_TIMEOUT": {
+      "original": 1000,
+      "benchmark": 120
+    }
+  },
+  "phase": "timeout",
+  "graph_available": false,
+  "plan_success": true,
+  "planned_files": [
+    "src/accounts.py",
+    "src/bank.py",
+    "src/main.py",
+    "requirements.txt",
+    "README.md"
+  ],
+  "project_scale": "medium",
+  "execute_success": false,
+  "steps_total": 5,
+  "steps_completed": 0,
+  "final_status": "executing",
+  "fix_counters": {
+    "fixer_calls": 3,
+    "installs": 0,
+    "installs_ok": 0
+  },
+  "seconds": 47814.3,
+  "fix_events": [],
+  "llm_calls": 13
+}

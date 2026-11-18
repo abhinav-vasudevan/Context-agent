@@ -1,0 +1,117 @@
+{
+  "run": "smoke",
+  "chars_per_token": 0.33,
+  "variants": {
+    "agent": {
+      "tasks": 1,
+      "tests_passed": 0,
+      "tests_total": 8,
+      "test_pass_rate": 0.0,
+      "mean_task_pass_rate": 0.0,
+      "tasks_fully_passing": 0,
+      "programs_running": 0,
+      "pipeline_completed": 1,
+      "mean_minutes": 22.8,
+      "llm_calls": 15,
+      "calls_by_component": {
+        "planner": 4,
+        "coder": 4,
+        "fixer": 3,
+        "summarizer": 3,
+        "scaffolding": 1
+      },
+      "context": {
+        "max_call_input_tokens": 37448,
+        "median_call_input_tokens": 7342,
+        "p95_call_input_tokens": 35894,
+        "calls_over_window": 3,
+        "max_task_total_input": 182671,
+        "max_project_tokens": 31103,
+        "total_output_tokens": 4115
+      },
+      "self_healing": {
+        "repair_events": 3,
+        "verifiable": 3,
+        "verified_fixed": 0,
+        "verified_fix_rate": 0.0,
+        "mean_attempts": 1,
+        "auto_installs": 0,
+        "by_category": {
+          "lint": {
+            "events": 3,
+            "verified_fixed": 0,
+            "verifiable": 3,
+            "attempts": 3
+          }
+        }
+      },
+      "per_task": [
+        {
+          "task": "bank_system",
+          "pass": "0/8",
+          "pass_rate": 0.0,
+          "runs": false,
+          "phase": "done",
+          "steps": "5/5",
+          "minutes": 22.8,
+          "llm_calls": 15,
+          "max_call_input": 37448,
+          "total_input_processed": 182671,
+          "total_output": 4115,
+          "project_tokens": 31103,
+          "project_files": 7
+        }
+      ]
+    },
+    "baseline": {
+      "tasks": 1,
+      "tests_passed": 3,
+      "tests_total": 8,
+      "test_pass_rate": 37.5,
+      "mean_task_pass_rate": 37.5,
+      "tasks_fully_passing": 0,
+      "programs_running": 0,
+      "pipeline_completed": 1,
+      "mean_minutes": 3.8,
+      "llm_calls": 1,
+      "calls_by_component": {
+        "baseline": 1
+      },
+      "context": {
+        "max_call_input_tokens": 6091,
+        "median_call_input_tokens": 6091,
+        "p95_call_input_tokens": 6091,
+        "calls_over_window": 0,
+        "max_task_total_input": 6091,
+        "max_project_tokens": 10530,
+        "total_output_tokens": 807
+      },
+      "self_healing": {
+        "repair_events": 0,
+        "verifiable": 0,
+        "verified_fixed": 0,
+        "verified_fix_rate": 0.0,
+        "mean_attempts": 0,
+        "auto_installs": 0,
+        "by_category": {}
+      },
+      "per_task": [
+        {
+          "task": "bank_system",
+          "pass": "3/8",
+          "pass_rate": 0.375,
+          "runs": false,
+          "phase": "done",
+          "steps": "-/-",
+          "minutes": 3.8,
+          "llm_calls": 1,
+          "max_call_input": 6091,
+          "total_input_processed": 6091,
+          "total_output": 807,
+          "project_tokens": 10530,
+          "project_files": 3
+        }
+      ]
+    }
+  }
+}

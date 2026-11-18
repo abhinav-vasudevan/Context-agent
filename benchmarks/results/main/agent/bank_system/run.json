@@ -1,0 +1,75 @@
+{
+  "task": "bank_system",
+  "variant": "agent",
+  "model": "llama3.1-bench:8b",
+  "config_overrides": {
+    "MAX_FIX_ATTEMPTS": {
+      "original": 999999,
+      "benchmark": 4
+    },
+    "MAX_QA_ATTEMPTS": {
+      "original": 10,
+      "benchmark": 2
+    },
+    "MAX_QA_INTERACTIONS": {
+      "original": 20,
+      "benchmark": 8
+    },
+    "QA_PROCESS_TIMEOUT": {
+      "original": 1000,
+      "benchmark": 120
+    },
+    "PROCESS_RUN_TIMEOUT": {
+      "original": 1000,
+      "benchmark": 120
+    }
+  },
+  "phase": "timeout",
+  "sessions": 2,
+  "graph_available": true,
+  "plan_success": true,
+  "planned_files": [
+    "accounts/account.py",
+    "accounts/exceptions.py",
+    "bank/bank.py",
+    "main.py",
+    "requirements.txt",
+    "README.md"
+  ],
+  "project_scale": "medium",
+  "execute_success": false,
+  "steps_total": 6,
+  "steps_completed": 3,
+  "final_status": "executing",
+  "fix_counters": {
+    "fixer_calls": 10,
+    "installs": 0,
+    "installs_ok": 0
+  },
+  "seconds": 10800.5,
+  "fix_events": [
+    {
+      "file": "accounts/exceptions.py",
+      "category": "type",
+      "reported_fixed": false,
+      "verified_fixed": false,
+      "verify_method": "ruff+pyright_recheck",
+      "attempts": 4,
+      "auto_installs": 0,
+      "seconds": 854.6,
+      "error_head": "Pyright Type Errors:\n  d:\\Documents\\L&T\\Context-agent-dev\\benchmarks\\results\\main\\agent\\bank_system\\workspace\\accounts\\exceptions.py:1:18 - error: \"Bank\" is unknown import symbol (reportAttributeAccessIssue)"
+    },
+    {
+      "file": "bank/bank.py",
+      "category": "lint",
+      "reported_fixed": false,
+      "verified_fixed": false,
+      "verify_method": "ruff+pyright_recheck",
+      "attempts": 4,
+      "auto_installs": 0,
+      "seconds": 4462.8,
+      "error_head": "Ruff Lint Errors:\nF821 Undefined name `Account`\n  --> bank\\bank.py:12:42\n   |\n10 |         self.accounts[owner] = Account(owner, initial_deposit)\n11 |\n12 |     def get_account(self, owner: str) -> Account:\n   |                                          ^^^^^^^\n13 |         if owner not in self.accoun"
+    }
+  ],
+  "llm_calls": 35
+}

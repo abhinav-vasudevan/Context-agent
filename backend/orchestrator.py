@@ -386,6 +386,19 @@ class Orchestrator:
                     self.state.plan_steps = self.master_planner.flatten_to_plan_steps(arch_spec)
                 except Exception as e:
                     return {"success": False, "error": str(e)}
+
+                code_steps = [
+                    s for s in self.state.plan_steps
+                    if s.file_path not in ("README.md", "requirements.txt")
+                ]
+                if not code_steps:
+                    err_msg = (
+                        "Planner produced no source files (only requirements.txt/README.md). "
+                        "The model's architecture output could not be parsed — please regenerate the plan."
+                    )
+                    await self.ws.send_error(err_msg)
+                    self.state.status = "failed"
+                    return {"success": False, "error": err_msg}
             else:
                 # ── JIT Epic Planning for LARGE/MASSIVE projects ──
                 await self.ws.send_status("planning", f"Project is {self.state.project_scale.upper()}. Using JIT Epic Planning...")
@@ -633,7 +646,10 @@ class Orchestrator:
                         def on_stub_token(token: str):
                             asyncio.ensure_future(self.ws.send_llm_token(token))
 
-                        stubs = await self.architect.generate_stubs(modules, on_token=on_stub_token)
+                        stubs = await self.architect.generate_stubs(
+                            modules, on_token=on_stub_token,
+                            project_spec=self.state.original_prompt or "",
+                        )
 
                         if self._cancel_requested:
                             await self.ws.send_status("cancelled", "Execution cancelled by user")
@@ -822,7 +838,22 @@ class Orchestrator:
 
             if "Syntax Error" in error or "placeholder" in error.lower():
                 await self.ws.send_status("fixing", f"Auto-fixing generation error in {step.file_path}...")
-                fixed = await self._auto_fix(step.file_path, error, verify_execution=False)
+
+                async def check_generated():
+                    p = self.workspace_dir / step.file_path
+                    if not p.exists():
+                        return False, f"File not found: {step.file_path}"
+                    text = p.read_text(encoding="utf-8")
+                    if "# ..." in text or "# ... existing" in text.lower():
+                        return False, "File still contains a '# ...' placeholder. Output the ENTIRE file."
+                    if step.file_path.endswith(".py"):
+                        r = await self.runner.syntax_check(step.file_path)
+                        if not r.success:
+                            return False, f"Syntax Error:\n{r.error}"
+                    return True, ""
+
+                fixed = await self._auto_fix(step.file_path, error, verify_execution=False,
+                                             verify_fn=check_generated)
                 if not fixed:
                     return {"success": False, "error": error}
             else:
@@ -850,11 +881,14 @@ class Orchestrator:
                 v_success, v_error = await self.verifier.verify_file(step.file_path)
                 if not v_success:
                     await self.ws.send_status("fixing", f"Incremental check failed for {step.file_path}. Auto-fixing...")
-                    fixed = await self._auto_fix(step.file_path, v_error, verify_execution=False)
-                    if fixed:
-                        code_content = file_path.read_text(encoding="utf-8")
-                    else:
+                    fixed = await self._auto_fix(
+                        step.file_path, v_error, verify_execution=False,
+                        verify_fn=lambda: self.verifier.verify_file(step.file_path),
+                    )
+                    if not fixed:
                         await self.ws.send_error("Failed to fix lint/type errors.", step.file_path)
+                # Ruff --fix may have edited the file even when the check passed.
+                code_content = file_path.read_text(encoding="utf-8")
 
             # ── Phase 8: Test-First Verification (TDD) ──
             if step.file_path.endswith(".py"):
@@ -865,13 +899,20 @@ class Orchestrator:
                 # If a test file was generated in Phase 0, run pytest against it
                 if (self.workspace_dir / test_path).exists():
                     await self.ws.send_status("verifying", f"Running TDD tests for {step.file_path}...")
-                    test_cmd = f"{self.runner._get_python_cmd()} -m pytest {test_path}"
+                    # Quoted: the shell would split an unquoted path containing spaces or '&'.
+                    test_cmd = f'"{self.runner._get_python_cmd()}" -m pytest "{test_path.as_posix()}"'
                     test_res = await self.runner.run_shell_command(test_cmd)
 
                     if not test_res.success:
                         await self.ws.send_status("fixing", f"Tests failed for {step.file_path}. Auto-fixing...")
                         error_msg = f"Pytest Output:\n{test_res.stdout}\n{test_res.stderr}"
-                        fixed = await self._auto_fix(step.file_path, error_msg, verify_execution=False)
+
+                        async def rerun_tests():
+                            r = await self.runner.run_shell_command(test_cmd)
+                            return r.success, f"Pytest Output:\n{r.stdout}\n{r.stderr}"
+
+                        fixed = await self._auto_fix(step.file_path, error_msg, verify_execution=False,
+                                                     verify_fn=rerun_tests)
                         if fixed:
                             code_content = file_path.read_text(encoding="utf-8")
                         else:
@@ -962,13 +1003,25 @@ class Orchestrator:
         """Get the original user prompt."""
         return self.state.original_prompt if self.state else ""
 
-    async def _auto_fix(self, file_path: str, error_text: str, verify_execution: bool = True) -> bool:
-        """Run the auto-fix loop. Automatically installs missing modules."""
+    async def _auto_fix(self, file_path: str, error_text: str, verify_execution: bool = True,
+                        verify_fn=None) -> bool:
+        """Run the auto-fix loop. Automatically installs missing modules.
+
+        verify_execution=True  -> after each patch, re-run the file.
+        verify_fn (async () -> (ok, error)) -> after each patch, re-run that
+            check (e.g. Ruff/Pyright, py_compile, pytest) and keep fixing until
+            it passes. Capped at MAX_STATIC_FIX_ATTEMPTS rounds.
+        Neither -> success as soon as a patch applies (unverified).
+        """
         attempts = 0
         current_error = error_text
+        last_real_error = error_text
         target_file = file_path
+        max_attempts = config.MAX_FIX_ATTEMPTS
+        if verify_fn is not None and not verify_execution:
+            max_attempts = min(max_attempts, getattr(config, "MAX_STATIC_FIX_ATTEMPTS", 4))
 
-        while attempts < config.MAX_FIX_ATTEMPTS:
+        while attempts < max_attempts:
             await self._manual_pause_event.wait()
             attempts += 1
 
@@ -1010,9 +1063,14 @@ class Orchestrator:
 
             if not success:
                 await self.ws.send_error(msg, target_file)
-                current_error = msg
                 if "does not exist" in msg or "truncated by the API" in msg:
                     break
+                if verify_fn is not None and not verify_execution:
+                    # Keep the real error for the next round; the fixer's message
+                    # only describes its own failure ("no edits applied", ...).
+                    current_error = f"{last_real_error}\n\n(Previous fix attempt failed: {msg[:300]})"
+                else:
+                    current_error = msg
                 continue
 
             # Send updated files to frontend
@@ -1059,11 +1117,24 @@ class Orchestrator:
                             return True
                         current_error = run_result.error or run_result.stderr
                         await self.ws.send_error(current_error, file_path)
+            elif verify_fn is not None:
+                try:
+                    ok, new_error = await verify_fn()
+                except Exception as e:
+                    log.warning("Fix verification check failed to run: %s", e)
+                    ok, new_error = False, str(e)
+                if ok:
+                    await self.ws.send_status("fixed", "Fix verified: check now passes.")
+                    return True
+                current_error = new_error or last_real_error
+                last_real_error = current_error
+                target_file = file_path
+                await self.ws.send_error(current_error, file_path)
             else:
                 await self.ws.send_status("fixed", "Code updated. (Execution verification skipped)")
                 return True
 
-        await self.ws.send_error(f"Max fix attempts ({config.MAX_FIX_ATTEMPTS}) reached.", file_path)
+        await self.ws.send_error(f"Max fix attempts ({max_attempts}) reached.", file_path)
         return False
 
     async def retry_execution(self, target_step_number: Optional[int] = None) -> dict:

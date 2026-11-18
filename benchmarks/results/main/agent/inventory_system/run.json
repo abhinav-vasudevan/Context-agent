@@ -1,0 +1,86 @@
+{
+  "task": "inventory_system",
+  "variant": "agent",
+  "model": "llama3.1-bench:8b",
+  "config_overrides": {
+    "MAX_FIX_ATTEMPTS": {
+      "original": 999999,
+      "benchmark": 4
+    },
+    "MAX_QA_ATTEMPTS": {
+      "original": 10,
+      "benchmark": 2
+    },
+    "MAX_QA_INTERACTIONS": {
+      "original": 20,
+      "benchmark": 8
+    },
+    "QA_PROCESS_TIMEOUT": {
+      "original": 1000,
+      "benchmark": 120
+    },
+    "PROCESS_RUN_TIMEOUT": {
+      "original": 1000,
+      "benchmark": 120
+    }
+  },
+  "phase": "done",
+  "sessions": 1,
+  "graph_available": true,
+  "plan_success": true,
+  "planned_files": [
+    "src/product_module.py",
+    "src/inventory_module.py",
+    "src/reporting_module.py",
+    "src/command_line_interface.py",
+    "requirements.txt",
+    "README.md"
+  ],
+  "project_scale": "medium",
+  "execute_success": true,
+  "steps_total": 6,
+  "steps_completed": 6,
+  "final_status": "completed",
+  "fix_counters": {
+    "fixer_calls": 6,
+    "installs": 0,
+    "installs_ok": 0
+  },
+  "seconds": 2740.0,
+  "fix_events": [
+    {
+      "file": "src/inventory_module.py",
+      "category": "type",
+      "reported_fixed": false,
+      "verified_fixed": false,
+      "verify_method": "ruff+pyright_recheck",
+      "attempts": 4,
+      "auto_installs": 0,
+      "seconds": 1196.0,
+      "error_head": "Pyright Type Errors:\n  d:\\Documents\\L&T\\Context-agent-dev\\benchmarks\\results\\main\\agent\\inventory_system\\workspace\\src\\inventory_module.py:4:29 - error: Type \"type[product_module.Product]\" is not assignable to declared type \"type[inventory_module.Product]\""
+    },
+    {
+      "file": "src/reporting_module.py",
+      "category": "type",
+      "reported_fixed": true,
+      "verified_fixed": true,
+      "verify_method": "ruff+pyright_recheck",
+      "attempts": 1,
+      "auto_installs": 0,
+      "seconds": 248.4,
+      "error_head": "Pyright Type Errors:\n  d:\\Documents\\L&T\\Context-agent-dev\\benchmarks\\results\\main\\agent\\inventory_system\\workspace\\src\\reporting_module.py:5:37 - error: Cannot access attribute \"values\" for class \"Inventory\""
+    },
+    {
+      "file": "src/command_line_interface.py",
+      "category": "type",
+      "reported_fixed": true,
+      "verified_fixed": true,
+      "verify_method": "ruff+pyright_recheck",
+      "attempts": 1,
+      "auto_installs": 0,
+      "seconds": 152.5,
+      "error_head": "Pyright Type Errors:\n  d:\\Documents\\L&T\\Context-agent-dev\\benchmarks\\results\\main\\agent\\inventory_system\\workspace\\src\\command_line_interface.py:28:39 - error: Argument of type \"Product\" cannot be assigned to parameter \"product\" of type \"Product\" in function \"add_product\""
+    }
+  ],
+  "llm_calls": 20
+}

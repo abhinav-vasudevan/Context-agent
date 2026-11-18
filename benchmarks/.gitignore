@@ -1,0 +1,7 @@
+# generated workspaces are large (each has its own venv)
+results/*/*/*/workspace/
+bench/Modelfile
+__pycache__/
+# live-timer console logs (large, regenerated each run)
+results/*_console.txt
+results_*_console.txt

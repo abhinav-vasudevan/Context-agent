@@ -1,0 +1,65 @@
+{
+  "task": "text_analyzer",
+  "variant": "agent",
+  "model": "llama3.1-bench:8b",
+  "config_overrides": {
+    "MAX_FIX_ATTEMPTS": {
+      "original": 999999,
+      "benchmark": 4
+    },
+    "MAX_QA_ATTEMPTS": {
+      "original": 10,
+      "benchmark": 2
+    },
+    "MAX_QA_INTERACTIONS": {
+      "original": 20,
+      "benchmark": 8
+    },
+    "QA_PROCESS_TIMEOUT": {
+      "original": 1000,
+      "benchmark": 120
+    },
+    "PROCESS_RUN_TIMEOUT": {
+      "original": 1000,
+      "benchmark": 120
+    }
+  },
+  "phase": "done",
+  "sessions": 1,
+  "graph_available": true,
+  "plan_success": true,
+  "planned_files": [
+    "src/tokenizer.py",
+    "src/stats.py",
+    "src/stats.py",
+    "src/stats.py",
+    "src/main.py",
+    "requirements.txt",
+    "README.md"
+  ],
+  "project_scale": "medium",
+  "execute_success": true,
+  "steps_total": 7,
+  "steps_completed": 7,
+  "final_status": "completed",
+  "fix_counters": {
+    "fixer_calls": 4,
+    "installs": 0,
+    "installs_ok": 0
+  },
+  "seconds": 8312.6,
+  "fix_events": [
+    {
+      "file": "src/main.py",
+      "category": "type",
+      "reported_fixed": false,
+      "verified_fixed": false,
+      "verify_method": "ruff+pyright_recheck",
+      "attempts": 4,
+      "auto_installs": 0,
+      "seconds": 7291.8,
+      "error_head": "Pyright Type Errors:\n  d:\\Documents\\L&T\\Context-agent-dev\\benchmarks\\results\\main\\agent\\text_analyzer\\workspace\\src\\main.py:2:23 - error: \"tokenize\" is unknown import symbol (reportAttributeAccessIssue)\n  d:\\Documents\\L&T\\Context-agent-dev\\benchmarks\\results\\main\\agent\\text_analyzer\\workspace\\src\\ma"
+    }
+  ],
+  "llm_calls": 35
+}

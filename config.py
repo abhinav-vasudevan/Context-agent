@@ -51,6 +51,11 @@ MIN_GENERATION_BUDGET = 10000     # Ensures the LLM always has space to write it
 # ── Agent Settings ────────────────────────────────────────────────────
 MAX_FIX_ATTEMPTS = 999999            # Max retries when fixing errors (effectively infinite)
 MAX_SEMANTIC_FIX_ATTEMPTS = 30   # Max retries for the post-build semantic analysis loop (Ruff/Pyright/Semgrep)
+MAX_STATIC_FIX_ATTEMPTS = 4      # Max verified fix rounds per lint/type/syntax/test failure during a step
+FIXER_MAX_ITERATIONS = 6         # Max LLM turns inside one Fixer.fix_error agent loop (prompt grows each turn)
+FIXER_PROMPT_BUDGET_CHARS = 20000 # Fixer transcript is compacted past this size (~5k tokens) to stay well inside the window
+FIXER_MAX_SEARCH_FAILURES = 3    # SEARCH/REPLACE misses on a file before demanding a full-file rewrite
+SPEC_EXCERPT_CHARS = 6000        # Max chars of the original user spec shown to the coder/architect per call
 MAX_PLAN_RETRIES = 5             # Max retries for plan generation
 SYNTAX_CHECK_TIMEOUT = 600       # Seconds for syntax check subprocess
 PROCESS_RUN_TIMEOUT = 1000       # Seconds for running user projects (5 min)

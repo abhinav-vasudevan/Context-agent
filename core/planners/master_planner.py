@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import re
 import json
+from pathlib import Path
 from typing import Optional, Callable, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -447,22 +448,12 @@ Break each subsystem into concrete services and file modules now."""
             data = json.loads(cleaned)
         except json.JSONDecodeError as e:
             log.error("Failed to parse services JSON: %s", e)
-            # Fallback: create default services for each subsystem
-            for subsystem in arch.subsystems:
-                if not subsystem.services:
-                    subsystem.services = [
-                        ServiceSpec(
-                            name=f"{subsystem.name} Core",
-                            description=subsystem.purpose,
-                            modules=[
-                                ModuleSpec(
-                                    name=f"{subsystem.name.lower().replace(' ', '_')}_core",
-                                    file_path=f"src/{subsystem.name.lower().replace(' ', '_')}.py",
-                                    description=subsystem.purpose,
-                                )
-                            ],
-                        )
-                    ]
+            self._fill_empty_subsystems(arch)
+            return arch
+
+        if not isinstance(data, dict):
+            log.error("Services JSON is not an object; using default services")
+            self._fill_empty_subsystems(arch)
             return arch
 
         # Map subsystem names to existing ArchitectureSpec subsystems (case-insensitive)
@@ -495,13 +486,22 @@ Break each subsystem into concrete services and file modules now."""
                     interfaces=svc_data.get("interfaces", []),
                 )
 
-                # Parse modules
-                for mod_data in svc_data.get("modules", []):
+                # Parse modules (small models sometimes say "files"/"path")
+                mod_list = svc_data.get("modules") or svc_data.get("files") or []
+                for mod_data in mod_list:
+                    if isinstance(mod_data, str):
+                        mod_data = {"file_path": mod_data}
                     if not isinstance(mod_data, dict):
                         continue
+                    file_path = (
+                        mod_data.get("file_path") or mod_data.get("path")
+                        or mod_data.get("file") or ""
+                    ).strip()
+                    if not file_path:
+                        continue
                     module = ModuleSpec(
-                        name=mod_data.get("name", ""),
-                        file_path=mod_data.get("file_path", ""),
+                        name=mod_data.get("name", "") or Path(file_path).stem,
+                        file_path=file_path,
                         description=mod_data.get("description", ""),
                         exports=mod_data.get("exports", []),
                         dependencies=mod_data.get("dependencies", []),
@@ -510,8 +510,41 @@ Break each subsystem into concrete services and file modules now."""
 
                 subsystem.services.append(service)
 
+        # Never let a subsystem end up with zero files — otherwise the plan
+        # silently collapses to just requirements.txt + README.md.
+        self._fill_empty_subsystems(arch)
+
         log.info("MasterPlanner: parsed services — total modules: %d", len(arch.get_all_modules()))
         return arch
+
+    @staticmethod
+    def _fill_empty_subsystems(arch: ArchitectureSpec) -> None:
+        """Give every subsystem that has no code modules a default core module."""
+        for subsystem in arch.subsystems:
+            has_code = any(
+                m.file_path not in ("README.md", "requirements.txt")
+                for svc in subsystem.services for m in svc.modules
+            )
+            if has_code:
+                continue
+            log.warning(
+                "Service planner produced no files for subsystem '%s'; using default module",
+                subsystem.name,
+            )
+            slug = re.sub(r'\W+', '_', subsystem.name.lower()).strip('_') or "core"
+            subsystem.services = [
+                ServiceSpec(
+                    name=f"{subsystem.name} Core",
+                    description=subsystem.purpose,
+                    modules=[
+                        ModuleSpec(
+                            name=f"{slug}_core",
+                            file_path=f"src/{slug}.py",
+                            description=subsystem.purpose,
+                        )
+                    ],
+                )
+            ]
 
     # ── Conversion to v1 PlanSteps ────────────────────────────────────
 

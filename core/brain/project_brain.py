@@ -79,6 +79,9 @@ class ProjectBrain:
             user=neo4j_user,
             password=neo4j_password,
             database=neo4j_database,
+            # Workspace path is unique per project, so it isolates this
+            # project's nodes from every other project in the shared database.
+            project=str(Path(workspace_dir).resolve()),
         )
 
         chroma_dir = str(self.brain_dir / "chroma")

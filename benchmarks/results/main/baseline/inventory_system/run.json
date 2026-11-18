@@ -1,0 +1,15 @@
+{
+  "task": "inventory_system",
+  "variant": "baseline",
+  "model": "llama3.1-bench:8b",
+  "phase": "done",
+  "files_written": [
+    "inventory.py",
+    "main.py",
+    "product.py",
+    "report.py"
+  ],
+  "execute_success": true,
+  "seconds": 186.4,
+  "llm_calls": 1
+}
