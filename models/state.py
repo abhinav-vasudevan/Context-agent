@@ -201,6 +201,7 @@ class ProjectState:
     brain_path: str = ""                       # path to .agent_brain directory
     hierarchy_spec_path: str = ""              # path to architecture_spec.json
     ingested_architecture_notes: str = ""      # text output from UnderstandingAgent
+    agent_task: str = ""                       # full task text the agent loop builds from (spec + docs + codebase notes)
 
     def increment_llm_calls(self, tokens: int = 0):
         """Track LLM usage."""
@@ -286,6 +287,7 @@ class ProjectState:
             "ingested_architecture_notes": self.ingested_architecture_notes,
             "user_documents": [doc.to_dict() for doc in self.user_documents],
             "global_master_summary": self.global_master_summary,
+            "agent_task": self.agent_task,
         }
 
     # ── Serialization ─────────────────────────────────────────────────
@@ -396,6 +398,7 @@ class ProjectState:
             "ingested_architecture_notes": self.ingested_architecture_notes,
             "user_documents": [doc.to_dict() for doc in self.user_documents],
             "global_master_summary": self.global_master_summary,
+            "agent_task": self.agent_task,
         }
 
     @classmethod
@@ -431,6 +434,7 @@ class ProjectState:
         state.venv_path = data.get("venv_path", "")
         state.ingested_architecture_notes = data.get("ingested_architecture_notes", "")
         state.global_master_summary = data.get("global_master_summary", "")
+        state.agent_task = data.get("agent_task", "")
 
         state.user_documents = [UserDocument.from_dict(doc) for doc in data.get("user_documents", [])]
 

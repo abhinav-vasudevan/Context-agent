@@ -42,3 +42,6 @@ projects/*/
 graphify-out/
 *.log
 server.log
+
+# Third-party reference copy (OpenCode, MIT) - re-fetch with the commit in reference/opencode/README_REFERENCE.md
+reference/opencode/packages/

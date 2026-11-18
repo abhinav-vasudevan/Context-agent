@@ -131,6 +131,27 @@ class LLMClient:
             chunks.append(chunk)
         return "".join(chunks)
 
+    async def chat(
+        self,
+        messages: list[dict],
+        system: str = "",
+        on_token: Optional[Callable[[str], None]] = None,
+        on_thinking: Optional[Callable[[str], None]] = None,
+        disable_think: bool = True,
+    ) -> str:
+        """Multi-turn completion: send a whole conversation, return the reply text.
+
+        `self.last_done_reason` is set afterwards ("stop", "length", ...) so a
+        caller can tell when the reply was cut off by the output limit.
+        """
+        chunks = []
+        async for chunk in self.generate_stream(
+            prompt="", system=system, on_token=on_token, on_thinking=on_thinking,
+            disable_think=disable_think, messages=messages,
+        ):
+            chunks.append(chunk)
+        return "".join(chunks)
+
     # ── Streaming generation ──────────────────────────────────────────
 
     async def generate_stream(
@@ -141,9 +162,14 @@ class LLMClient:
         on_thinking: Optional[Callable[[str], None]] = None,
         stop: Optional[list[str]] = None,
         disable_think: bool = False,
+        messages: Optional[list[dict]] = None,
     ) -> AsyncIterator[str]:
         """
         Stream tokens from Ollama as they arrive.
+
+        `messages` (optional): a full multi-turn conversation
+        [{"role": "user"|"assistant", "content": ...}, ...]. When given it is
+        sent instead of the single `prompt`; `system` is still prepended.
         Yields individual text chunks (content only, not thinking).
         Includes retry logic with exponential backoff.
 
@@ -158,7 +184,7 @@ class LLMClient:
         attempt = 0
         while True:
             try:
-                async for token in self._do_stream(prompt, system, on_token, on_thinking, stop, max_tokens_override=current_max_tokens, disable_think=disable_think):
+                async for token in self._do_stream(prompt, system, on_token, on_thinking, stop, max_tokens_override=current_max_tokens, disable_think=disable_think, messages=messages):
                     yield token
                 return  # Success — exit retry loop
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as e:
@@ -275,8 +301,14 @@ class LLMClient:
         stop: Optional[list[str]] = None,
         max_tokens_override: Optional[int] = None,
         disable_think: bool = False,
+        messages: Optional[list[dict]] = None,
     ) -> AsyncIterator[str]:
         """Internal streaming implementation (single attempt)."""
+        self.last_done_reason = None
+        conversation = list(messages) if messages else [{"role": "user", "content": prompt}]
+        if messages:
+            # For logging/estimates, treat the whole conversation as the prompt.
+            prompt = "\n\n".join(str(m.get("content", "")) for m in conversation)
         if self.use_groq:
             log.info(
                 "LLM request (Groq): model=%s, prompt_len=%d, system_len=%d",
@@ -288,14 +320,14 @@ class LLMClient:
                 "Authorization": f"Bearer {self.groq_api_key}",
                 "Content-Type": "application/json"
             }
-            messages = []
+            groq_messages = []
             if system:
-                messages.append({"role": "system", "content": system})
-            messages.append({"role": "user", "content": prompt})
+                groq_messages.append({"role": "system", "content": system})
+            groq_messages.extend(conversation)
 
             payload = {
                 "model": self.model,
-                "messages": messages,
+                "messages": groq_messages,
                 "stream": True,
                 "temperature": self.temperature,
             }
@@ -346,6 +378,8 @@ class LLMClient:
                                     choices = data.get("choices", [])
                                     if choices:
                                         finish_reason = choices[0].get("finish_reason")
+                                        if finish_reason:
+                                            self.last_done_reason = finish_reason
                                         if finish_reason == "length":
                                             log.warning("LLM output truncated by token limit (finish_reason='length'). Partial output will be used.")
                                             break
@@ -411,8 +445,14 @@ class LLMClient:
                 if stop:
                     generation_config_dict["stop_sequences"] = stop
 
+                gemini_prompt = prompt
+                if messages:
+                    gemini_prompt = "\n\n".join(
+                        f"{'USER' if m.get('role') == 'user' else 'ASSISTANT'}:\n{m.get('content', '')}"
+                        for m in conversation
+                    ) + "\n\nASSISTANT:\n"
                 response = await self.gemini_model.generate_content_async(
-                    prompt,
+                    gemini_prompt,
                     stream=True,
                     generation_config=genai.types.GenerationConfig(**generation_config_dict)
                 )
@@ -449,10 +489,10 @@ class LLMClient:
             return
 
         # ── Ollama implementation — uses /api/chat with think:true ──
-        messages = []
+        ollama_messages = []
         if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
+            ollama_messages.append({"role": "system", "content": system})
+        ollama_messages.extend(conversation)
 
         options = {
             "num_ctx": self.num_ctx,
@@ -467,7 +507,7 @@ class LLMClient:
 
         payload = {
             "model": self.model,
-            "messages": messages,
+            "messages": ollama_messages,
             "stream": True,
             "options": options,
         }
@@ -552,6 +592,7 @@ class LLMClient:
                                         self._think_buffer = ""
 
                             if data.get("done", False):
+                                self.last_done_reason = data.get("done_reason")
                                 self.total_calls += 1
                                 prompt_tokens = data.get("prompt_eval_count", 0)
                                 completion_tokens = data.get("eval_count", 0)

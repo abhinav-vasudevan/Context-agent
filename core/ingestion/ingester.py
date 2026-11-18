@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from core.brain.project_brain import ProjectBrain
-from core.agents.summarizer import SummarizerAgent
 from core.agents.understanding_agent import UnderstandingAgent
 from core.context import FileRegistryBuilder
 from models.state import ProjectState, FileEntry
@@ -15,14 +14,15 @@ class RepositoryIngester:
     """
     Ingests an existing codebase into the Project Brain (Phase 7).
 
-    1. Extracts AST and graph relationships using Graphifyy.
-    2. Runs deep semantic analysis on every file to populate ChromaDB.
+    1. Extracts AST and graph relationships using Graphifyy (if installed).
+    2. Indexes every file from its AST into Neo4j (files, symbols, real import
+       edges) and ChromaDB (searchable descriptor) — no LLM calls, so even a
+       very large repository ingests in seconds to minutes, not hours.
     """
 
-    def __init__(self, workspace: Path, brain: ProjectBrain, summarizer: SummarizerAgent, understanding_agent: Optional[UnderstandingAgent] = None, state: Optional[ProjectState] = None):
+    def __init__(self, workspace: Path, brain: ProjectBrain, understanding_agent: Optional[UnderstandingAgent] = None, state: Optional[ProjectState] = None):
         self.workspace = workspace
         self.brain = brain
-        self.summarizer = summarizer
         self.understanding_agent = understanding_agent
         self.state = state
 
@@ -70,8 +70,9 @@ class RepositoryIngester:
                 on_status("No Python files found to ingest.")
             return True
 
-        # 3. Summarize each file and store in ChromaDB (Concurrent)
+        # 3. Index each file from its AST (Neo4j + ChromaDB). No LLM calls.
         sem = asyncio.Semaphore(10)
+        all_rel = [str(p.relative_to(self.workspace)).replace("\\", "/") for p in paths]
 
         completed_count = 0
 
@@ -82,11 +83,7 @@ class RepositoryIngester:
             async with sem:
                 try:
                     content = path.read_text(encoding="utf-8")
-                    summary = await self.summarizer.summarize_file(rel_path, content)
-
-                    if summary:
-                        # We don't have subsystem/service info for raw codebases, so we leave them empty
-                        self.brain.store_file_summary(summary, subsystem="", service="")
+                    self.brain.index_file_ast(rel_path, content, all_rel)
 
                     if self.state:
                         # Parse AST and add to File Registry so the Planner can see it
@@ -98,7 +95,7 @@ class RepositoryIngester:
                             self.state.file_registry.append(FileEntry(path=rel_path))
 
                 except Exception as e:
-                    log.warning(f"Failed to summarize {rel_path}: {e}")
+                    log.warning(f"Failed to index {rel_path}: {e}")
 
                 completed_count += 1
                 if on_progress:

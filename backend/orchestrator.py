@@ -23,11 +23,12 @@ from core.planners.master_planner import MasterPlanner
 from core.coder import Coder
 from core.runner import Runner, ErrorParser
 from core.fixer import Fixer
-from core.context import SmartChunker
+from core.context import FileRegistryBuilder, SmartChunker
 from core.brain.project_brain import ProjectBrain
 from core.retrieval.context_engine import ContextEngine
 from core.agents.integration_agent import IntegrationAgent
-from core.agents.summarizer import SummarizerAgent
+from core.agent import AgentCallbacks, AgentLoop
+from core.agent.workspace import list_source_files
 from core.agents.architect_agent import ArchitectAgent
 from core.agents.understanding_agent import UnderstandingAgent
 from core.agents.test_generator import TestGeneratorAgent
@@ -69,7 +70,7 @@ class Orchestrator:
         self.brain: Optional[ProjectBrain] = None
         self.context_engine: Optional[ContextEngine] = None
         self.integration_agent: Optional[IntegrationAgent] = None
-        self.summarizer: Optional[SummarizerAgent] = None
+        self.last_agent_result: Optional[dict] = None   # stats of the most recent agent-loop run
         self.architect: Optional[ArchitectAgent] = None
         self.test_generator: Optional[TestGeneratorAgent] = None
         self.verifier: Optional[IncrementalVerifier] = None
@@ -167,13 +168,12 @@ class Orchestrator:
         self.coder = Coder(self.llm, self.state, self.workspace_dir)
         self.fixer = Fixer(self.llm, self.state, self.workspace_dir, self.runner, self.coder)
         self.integration_agent = IntegrationAgent(self.llm, self.brain)
-        self.summarizer = SummarizerAgent(self.llm)
         self.architect = ArchitectAgent(self.llm)
         self.test_generator = TestGeneratorAgent(self.llm)
         self.understanding_agent = UnderstandingAgent(self.llm, self.brain)
         venv_path = Path(self.state.venv_path) if self.state.venv_path else None
         self.verifier = IncrementalVerifier(self.workspace_dir, venv_path)
-        self.ingester = RepositoryIngester(self.workspace_dir, self.brain, self.summarizer, self.understanding_agent, state=self.state)
+        self.ingester = RepositoryIngester(self.workspace_dir, self.brain, self.understanding_agent, state=self.state)
         self.doc_ingester = UserDocumentIngester(self.llm, self.brain.semantic, self.state)
         self.chat_agent = ChatAgent(self.llm, self.ws, self.state)
         self.template_engine = TemplateEngine()
@@ -182,10 +182,10 @@ class Orchestrator:
         self.state.save(self.workspace_dir / "project_state.json")
 
         # Auto-ingest if there are files in target_dir (prevent isolated environment hallucination)
-        has_files = any(
-            f.name not in [".venv", "venv", "__pycache__", ".git", ".agent_brain"]
-            for f in self.workspace_dir.iterdir()
-        )
+        # Only real project source counts — not the venv or the agent's own
+        # project_state.json (which used to trigger a pointless ingestion, plus
+        # an LLM call, on every brand-new project).
+        has_files = bool(list_source_files(self.workspace_dir))
         if has_files:
             asyncio.create_task(self.ingest_codebase())
 
@@ -240,12 +240,11 @@ class Orchestrator:
         self.coder = Coder(self.llm, self.state, self.workspace_dir)
         self.fixer = Fixer(self.llm, self.state, self.workspace_dir, self.runner, self.coder)
         self.integration_agent = IntegrationAgent(self.llm, self.brain)
-        self.summarizer = SummarizerAgent(self.llm)
         self.architect = ArchitectAgent(self.llm)
         self.test_generator = TestGeneratorAgent(self.llm)
         self.understanding_agent = UnderstandingAgent(self.llm, self.brain)
         self.verifier = IncrementalVerifier(self.workspace_dir, venv_path)
-        self.ingester = RepositoryIngester(self.workspace_dir, self.brain, self.summarizer, self.understanding_agent, state=self.state)
+        self.ingester = RepositoryIngester(self.workspace_dir, self.brain, self.understanding_agent, state=self.state)
         self.doc_ingester = UserDocumentIngester(self.llm, self.brain.semantic, self.state)
         self.chat_agent = ChatAgent(self.llm, self.ws, self.state)
         self.template_engine = TemplateEngine()
@@ -344,6 +343,9 @@ class Orchestrator:
 
             if SmartChunker.needs_chunking(planning_prompt):
                 planning_prompt = await self._map_reduce_large_prompt(planning_prompt)
+
+            if getattr(config, "AGENT_ENGINE", "loop") == "loop":
+                return await self._generate_plan_loop(planning_prompt)
 
             # Determine Complexity / Epics
             self.state.status = "architecting"
@@ -531,6 +533,9 @@ class Orchestrator:
         4. Run QA Agent to test main.py with LLM-driven inputs
         5. Fix any errors found during QA testing
         """
+        if getattr(config, "AGENT_ENGINE", "loop") == "loop":
+            return await self._execute_loop()
+
         await self._execution_lock.acquire()
         try:
             if not self.state or not self.state.plan_approved:
@@ -758,6 +763,210 @@ class Orchestrator:
             self._executing = False
             self._execution_lock.release()
 
+    # ── Agent-loop engine (config.AGENT_ENGINE == "loop") ─────────────
+
+    def _plan_data(self) -> list:
+        return [
+            {"step_number": s.step_number, "title": s.title, "file_path": s.file_path,
+             "description": s.description, "status": s.status.value, "depends_on": s.depends_on,
+             "epic_id": getattr(s, "epic_id", None)}
+            for s in self.state.plan_steps
+        ]
+
+    def _make_agent(self, phase: str) -> AgentLoop:
+        """Build an AgentLoop wired to the WebSocket UI, the Brain and the plan."""
+        venv_path = Path(self.state.venv_path) if self.state.venv_path else None
+
+        def on_token(t: str):
+            asyncio.ensure_future(self.ws.send_llm_token(t))
+
+        def on_thinking(t: str):
+            asyncio.ensure_future(self.ws.send_llm_thinking(t))
+
+        async def on_status(msg: str):
+            await self.ws.send_status(phase, msg)
+
+        async def on_llm_done(text: str):
+            await self.ws.send_llm_done(text)
+
+        async def on_file_changed(rel: str):
+            await self._on_agent_file(rel)
+
+        async def before_checks():
+            await self._install_requirements_if_changed()
+
+        callbacks = AgentCallbacks(
+            on_token=on_token, on_thinking=on_thinking, on_status=on_status, on_llm_done=on_llm_done,
+            on_file_changed=on_file_changed, before_checks=before_checks,
+            wait_if_paused=self._manual_pause_event.wait, should_stop=lambda: self._cancel_requested,
+        )
+        return AgentLoop(self.llm, self.workspace_dir, venv_path, brain=self.brain, callbacks=callbacks,
+                         entry_hint=self.state.project_entry_point or "")
+
+    async def _on_agent_file(self, rel: str):
+        """A file was written/edited by the agent: update UI, plan, registry and Brain."""
+        full = self.workspace_dir / rel
+        try:
+            content = full.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        await self.ws.send_file_update(rel, content)
+
+        if rel.endswith(".py"):
+            entry = FileRegistryBuilder.parse_file(full, rel)
+            if entry:
+                self.state.file_registry = [e for e in self.state.file_registry if e.path != rel] + [entry]
+        if self.brain:
+            try:
+                self.brain.index_file_ast(rel, content, list_source_files(self.workspace_dir))
+            except Exception as e:
+                log.debug("Brain indexing failed for %s: %s", rel, e)
+
+        step = next((s for s in self.state.plan_steps if s.file_path.replace("\\", "/").lstrip("./") == rel), None)
+        if step is None:
+            step = PlanStep(step_number=len(self.state.plan_steps) + 1, title=Path(rel).name, file_path=rel,
+                            description="Created by the agent")
+            self.state.plan_steps.append(step)
+            step.status = StepStatus.COMPLETED
+            await self.ws.send_plan_update(self._plan_data())
+        else:
+            step.status = StepStatus.COMPLETED
+        await self.ws.send_step_update(step.step_number, "completed", f"✓ {rel}")
+        self.state.completed_steps.add(step.step_number)
+        self.state.save(self.workspace_dir / "project_state.json")
+
+    async def _install_requirements_if_changed(self):
+        """Install requirements.txt / package.json when they are new or changed (asks permission once per version)."""
+        import hashlib
+        targets = [p for p in (self.workspace_dir / "requirements.txt", self.workspace_dir / "package.json",
+                               self.workspace_dir / "frontend" / "package.json") if p.exists()]
+        if not targets:
+            return
+        digest = hashlib.sha1(b"".join(p.read_bytes() for p in targets)).hexdigest()
+        if getattr(self, "_installed_deps_digest", None) == digest:
+            return
+        req_text = (self.workspace_dir / "requirements.txt").read_text(encoding="utf-8", errors="replace") \
+            if (self.workspace_dir / "requirements.txt").exists() else ""
+        has_python_deps = any(ln.strip() and not ln.strip().startswith("#") for ln in req_text.splitlines())
+        has_npm = any(p.name == "package.json" for p in targets)
+        if not has_python_deps and not has_npm:
+            self._installed_deps_digest = digest
+            return
+
+        req_id = str(uuid.uuid4())
+        self._permission_event = asyncio.Event()
+        self._permission_response = False
+        await self.ws.send_permission_request(req_id, "Install project dependencies (pip/npm)?", default=True)
+        try:
+            await asyncio.wait_for(self._permission_event.wait(), timeout=300)
+        except asyncio.TimeoutError:
+            self._permission_response = True
+        self._installed_deps_digest = digest
+        if not self._permission_response:
+            return
+        out = lambda text: asyncio.ensure_future(self.ws.send_process_stdout(text))  # noqa: E731
+        err = lambda text: asyncio.ensure_future(self.ws.send_process_stderr(text))  # noqa: E731
+        if has_python_deps:
+            await self.ws.send_status("installing", "Installing Python dependencies...")
+            res = await self.runner.install_requirements(on_stdout=out, on_stderr=err)
+            if not res.success:
+                await self.ws.send_error(res.error or res.stderr, "requirements.txt")
+        if has_npm:
+            await self.ws.send_status("installing", "Installing npm dependencies...")
+            res = await self.runner.install_npm_requirements(on_stdout=out, on_stderr=err)
+            if not res.success:
+                await self.ws.send_error(res.error or res.stderr, "package.json")
+
+    async def _generate_plan_loop(self, planning_prompt: str) -> dict:
+        """Loop engine planning: one short read-only plan (like OpenCode's plan mode)."""
+        self.state.agent_task = planning_prompt
+        self.state.status = "planning"
+        plan_text, files = "", []
+        if getattr(config, "AGENT_PLAN_FIRST", True):
+            await self.ws.send_status("planning", "Planning the implementation...")
+            agent = self._make_agent("planning")
+            plan_text, files = await agent.plan(planning_prompt)
+
+        self.state.architecture_text = plan_text
+        self.state.plan_steps = [
+            PlanStep(step_number=i + 1, title=Path(path).name, file_path=path, description=desc or path)
+            for i, (path, desc) in enumerate(files)
+        ]
+        self.state.plan_text = plan_text
+        (self.workspace_dir / "architecture.md").write_text(plan_text or "(no plan)", encoding="utf-8")
+        (self.workspace_dir / "plan.txt").write_text(plan_text or "(no plan)", encoding="utf-8")
+        self.state.status = "plan_review"
+        self.state.save(self.workspace_dir / "project_state.json")
+        plan_data = self._plan_data()
+        await self.ws.send_plan_update(plan_data)
+        await self.ws.send_status("plan_review", "Plan ready. Review and approve to start building.")
+        return {"success": True, "plan_steps": plan_data, "plan_text": plan_text}
+
+    async def _execute_loop(self) -> dict:
+        if not self.state or not self.state.plan_approved:
+            return {"success": False, "error": "Plan not approved"}
+        task = self.state.agent_task or self.state.original_prompt
+        planned = [s.file_path for s in self.state.plan_steps if s.file_path]
+        result = await self._run_agent(task, plan_text=self.state.architecture_text, planned_files=planned,
+                                       label="Building the project...")
+        if result.get("success") is not None and getattr(config, "AGENT_RUN_QA", False):
+            entry = self.state.project_entry_point or "main.py"
+            if (self.workspace_dir / entry).exists():
+                await self.ws.send_status("testing", f"QA Agent testing {entry}...")
+                await self._run_qa_test_loop()
+        return result
+
+    async def _run_agent(self, task: str, plan_text: str = "", planned_files: Optional[list] = None,
+                         notes: str = "", label: str = "Working...") -> dict:
+        """Run one agent-loop task end to end (used for builds and follow-up requests)."""
+        if self._execution_lock.locked():
+            return {"success": False, "error": "Already executing"}
+        async with self._execution_lock:
+            self._executing = True
+            self._cancel_requested = False
+            self.state.status = "executing"
+            self.state.save(self.workspace_dir / "project_state.json")
+            await self.ws.send_status("executing", label)
+            try:
+                agent = self._make_agent("generating")
+                res = await agent.run(task, plan_text=plan_text, planned_files=planned_files or [], notes=notes)
+                self.last_agent_result = res.to_dict()
+
+                for s in self.state.plan_steps:
+                    if s.status != StepStatus.COMPLETED and s.file_path:
+                        exists = (self.workspace_dir / s.file_path).exists()
+                        s.status = StepStatus.COMPLETED if exists else StepStatus.SKIPPED
+                        await self.ws.send_step_update(s.step_number, s.status.value,
+                                                       f"✓ {s.file_path}" if exists else f"Not needed: {s.file_path}")
+                self.state.chat_history.append({"role": "assistant", "content": res.summary or
+                                                f"Changed {len(res.files_changed)} file(s)."})
+                if res.stopped_reason == "cancelled":
+                    self.state.status = "paused"
+                    await self.ws.send_status("cancelled", "Stopped.")
+                elif res.final_problems:
+                    self.state.status = "completed"
+                    await self.ws.send_status(
+                        "warning", f"Finished with {len(res.final_problems)} unresolved problem(s): "
+                                   + "; ".join(res.final_problems[:3]))
+                else:
+                    self.state.status = "completed"
+                    await self.ws.send_status(
+                        "completed", f"Done: {len(res.files_changed)} file(s) changed, "
+                                     f"{res.llm_calls} model call(s), {res.seconds:.0f}s.")
+                self.state.save(self.workspace_dir / "project_state.json")
+                return {"success": res.stopped_reason != "cancelled" and not res.final_problems,
+                        "project": self.state.to_api_dict(), "agent": res.to_dict(),
+                        "usage": self.llm.get_usage()}
+            except Exception as e:
+                import traceback
+                log.error("Agent loop failed:\n%s", traceback.format_exc())
+                self.state.status = "failed"
+                self.state.save(self.workspace_dir / "project_state.json")
+                await self.ws.send_status("error", f"Agent failed: {e}")
+                return {"success": False, "error": str(e)}
+            finally:
+                self._executing = False
+
     async def execute_single_step(self, step_number: int) -> dict:
         """Execute a specific step by number."""
         if not self.state:
@@ -918,13 +1127,9 @@ class Orchestrator:
                         else:
                             await self.ws.send_error("Failed to fix test failures.", step.file_path)
 
-            # ── V2: Summarization & Storage ──
-            SUMMARIZABLE_EXTENSIONS = ('.py', '.js', '.jsx', '.ts', '.tsx')
-            if any(step.file_path.endswith(ext) for ext in SUMMARIZABLE_EXTENSIONS):
-                await self.ws.send_status("verifying", f"Summarizing {step.file_path} for Project Brain...")
-                summary = await self.summarizer.summarize_file(step.file_path, code_content)
-                if summary:
-                    self.brain.store_file_summary(summary)
+            # ── Index into the Project Brain from the AST (no LLM call) ──
+            if self.brain:
+                self.brain.index_file_ast(step.file_path, code_content, list_source_files(self.workspace_dir))
 
             await self.ws.send_file_update(step.file_path, code_content)
 
@@ -1231,6 +1436,30 @@ class Orchestrator:
 
         self.state.chat_history.append({"role": "user", "content": prompt})
         self.state.save(self.workspace_dir / "project_state.json")
+
+        if getattr(config, "AGENT_ENGINE", "loop") == "loop":
+            # Code changes (bug fixes AND features) go straight to the agent loop,
+            # like a follow-up message in Claude Code / OpenCode. Only requests
+            # about uploaded documents are routed to the document Q&A agent.
+            is_doc_task = False
+            if file_paths or self.state.user_documents:
+                try:
+                    verdict = await self.llm.generate(
+                        prompt=("Answer with one word, CODE or DOCUMENT. Is this request asking to change/build "
+                                "code (CODE), or to answer a question about uploaded documents (DOCUMENT)?\n\n"
+                                f"REQUEST:\n{prompt}"),
+                        system="You are a classifier. Answer with one word.", disable_think=True)
+                    is_doc_task = "DOC" in verdict.upper()
+                except Exception:
+                    is_doc_task = False
+            if is_doc_task:
+                if file_paths:
+                    for fp in file_paths:
+                        await self.doc_ingester.ingest_document(fp, Path(fp).name, on_status=self.ws.send_status)
+                await self.chat_agent.process_task(prompt, self.state.user_documents)
+                return {"success": True, "message": "Document task processed."}
+            notes = f"Original project request (background):\n{(self.state.original_prompt or '')[:4000]}"
+            return await self._run_agent(prompt, notes=notes, label="Working on your request...")
 
         await self.ws.send_status("planning", "Analyzing user request intent...")
 

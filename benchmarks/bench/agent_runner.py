@@ -28,21 +28,32 @@ from pathlib import Path
 from bench import settings
 
 VARIANTS = {
-    "agent": "Full pipeline",
-    "no_context": "Context Engine disabled (each file is written without retrieved project context)",
-    "no_scaffold": "Contract-first skeleton stubs (Phase 0) disabled",
-    "no_fixloop": "Self-healing fix loop disabled (no auto-fix, no QA repair)",
-    "no_graph": "Neo4j knowledge graph disabled",
+    # v3 agent-loop engine (config.AGENT_ENGINE = "loop")
+    "agent": "Agent loop (plan -> one conversation -> automatic checks -> fixes)",
+    "no_checks": "Agent loop without automatic checks/repair rounds",
+    "no_plan": "Agent loop without the read-only planning call",
+    # older v2 engine, kept for before/after comparison
+    "pipeline": "v2 pipeline (planner -> stubs -> one call per file -> fixer)",
+    "no_context": "v2 pipeline, Context Engine disabled",
+    "no_scaffold": "v2 pipeline, skeleton stubs disabled",
+    "no_fixloop": "v2 pipeline, fix loop disabled",
+    "no_graph": "v2 pipeline, Neo4j disabled",
 }
+LOOP_VARIANTS = {"agent", "no_checks", "no_plan"}
 
 
 # ── Environment setup (must run before the agent's modules are imported) ──
 
-def prepare_agent_env():
+def prepare_agent_env(variant: str = "agent"):
     sys.path.insert(0, str(settings.REPO_ROOT))
     import config
     config.OLLAMA_MODEL = settings.BENCH_MODEL   # read as a default arg at import time
-    applied = {}
+    config.AGENT_ENGINE = "loop" if variant in LOOP_VARIANTS else "pipeline"
+    if variant == "no_checks":
+        config.AGENT_MAX_REPAIR_ROUNDS = 0
+    if variant == "no_plan":
+        config.AGENT_PLAN_FIRST = False
+    applied = {"AGENT_ENGINE": {"original": "loop", "benchmark": config.AGENT_ENGINE}}
     for key, value in settings.CONFIG_OVERRIDES.items():
         applied[key] = {"original": getattr(config, key, None), "benchmark": value}
         setattr(config, key, value)
@@ -254,7 +265,7 @@ async def _heartbeat(out_dir: Path, prior: float, t0: float, info: dict):
 
 
 async def run(task_id: str, variant: str, out_dir: Path, resume: bool) -> dict:
-    config, overrides = prepare_agent_env()
+    config, overrides = prepare_agent_env(variant)
     from bench.meter import install as install_meter
     meter = install_meter(out_dir / "llm_calls.jsonl")
     meter.set_context(task=task_id, variant=variant)
@@ -304,7 +315,8 @@ async def run(task_id: str, variant: str, out_dir: Path, resume: bool) -> dict:
             return result
         result["graph_available"] = bool(orch.brain and orch.brain.graph.is_available)
         if variant != "no_fixloop":
-            counters = instrument_fix_loop(orch, fix_log)
+            if variant not in LOOP_VARIANTS:
+                counters = instrument_fix_loop(orch, fix_log)
         apply_variant(orch, variant)
         if variant == "no_graph":
             result["graph_available"] = False
@@ -338,6 +350,8 @@ async def run(task_id: str, variant: str, out_dir: Path, resume: bool) -> dict:
         result["steps_completed"] = sum(1 for s in steps if s.status.value == "completed")
         result["final_status"] = orch.state.status
         result["fix_counters"] = counters
+        result["engine"] = config.AGENT_ENGINE
+        result["agent_loop"] = getattr(orch, "last_agent_result", None)
     except Exception as e:
         import traceback
         result.update(phase=f"crashed_in_{result['phase']}", error=f"{e}\n{traceback.format_exc()[-2000:]}")

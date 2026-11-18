@@ -47,6 +47,7 @@ _COMPONENTS = [
     ("fixer", "fixer"),
     ("coder", "coder"),
     ("chat_agent", "chat"),
+    ("agent/loop", "agent"),
     ("orchestrator", "orchestrator"),
     ("baseline_runner", "baseline"),
 ]

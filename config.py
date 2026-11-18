@@ -48,6 +48,24 @@ TOKEN_BUDGET_STEP_DESC = 5000
 TOKEN_BUDGET_SUMMARIES = 10000
 MIN_GENERATION_BUDGET = 10000     # Ensures the LLM always has space to write its response
 
+# ── Agent Engine (core/agent/) ────────────────────────────────────────
+# "loop"     — OpenCode/Claude-Code style: one model, one conversation, actions
+#              (write/edit/read/search/run), automatic checks, fixes in place.
+#              Nothing is split while the project fits in the context window.
+# "pipeline" — the older v2 pipeline (planner → stubs → one call per file → fixer).
+AGENT_ENGINE = "loop"
+AGENT_PLAN_FIRST = True          # make a short read-only plan for review before building
+AGENT_CONTEXT_TOKENS = 0         # 0 = use the model's window (OLLAMA_NUM_CTX); set higher for cloud models
+AGENT_OUTPUT_RESERVE = 6000      # tokens kept free for the model's reply (a whole small project)
+AGENT_FIT_FRACTION = 0.6         # project fits ("full" mode) if it uses <= this share of the input budget
+AGENT_MAX_STEPS = 12             # max model turns per task
+AGENT_MAX_REPAIR_ROUNDS = 3      # max rounds of "checks found problems -> fix"
+AGENT_SMOKE_RUN = True           # run the entry point briefly as part of the checks
+AGENT_USE_PYRIGHT = True         # cross-file type checks (unknown attributes, wrong calls)
+AGENT_ALLOW_RUN = True           # let the model run shell commands (sandboxed by SecurityChecker)
+AGENT_THINK = False              # request "thinking" tokens (slow on CPU; for reasoning models only)
+AGENT_RUN_QA = False             # also run the slow interactive QA agent after building
+
 # ── Agent Settings ────────────────────────────────────────────────────
 MAX_FIX_ATTEMPTS = 999999            # Max retries when fixing errors (effectively infinite)
 MAX_SEMANTIC_FIX_ATTEMPTS = 30   # Max retries for the post-build semantic analysis loop (Ruff/Pyright/Semgrep)

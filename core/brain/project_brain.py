@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import json
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional
 
 import config
 from core.brain.knowledge_graph import KnowledgeGraph
@@ -294,6 +294,72 @@ class ProjectBrain:
         # Add dependency edges
         for dep in summary.dependencies:
             self.graph.add_edge("File", summary.entity_path, "File", dep, "DEPENDS_ON")
+
+    def index_file_ast(self, rel_path: str, content: str, all_files: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Index one file into the Brain from its AST — no LLM call.
+
+        Replaces the old LLM summarizer. Writes:
+          * Neo4j: File node, Symbol nodes (classes/functions, exact names) with
+            CONTAINS edges, and IMPORTS + DEPENDS_ON edges to the project files
+            it really imports (resolved from `import` statements, so the graph
+            is exact and exists as soon as the file is written).
+          * ChromaDB: a searchable descriptor (docstring + symbol names) so
+            semantic search keeps working.
+        Returns {"symbols": [...], "imports": [...]} for callers.
+        """
+        from core.agent.workspace import python_imports, python_outline, resolve_local_import
+
+        rel_path = rel_path.replace("\\", "/")
+        symbols: List[str] = []
+        local_deps: List[str] = []
+        doc = ""
+        if rel_path.endswith(".py"):
+            import ast as _ast
+            try:
+                tree = _ast.parse(content)
+                doc = (_ast.get_docstring(tree) or "").strip().split("\n")[0]
+                for node in tree.body:
+                    if isinstance(node, (_ast.ClassDef, _ast.FunctionDef, _ast.AsyncFunctionDef)):
+                        symbols.append(node.name)
+            except SyntaxError:
+                pass
+            files = all_files or []
+            for mod in python_imports(content):
+                dep = resolve_local_import(mod, rel_path, files)
+                if dep and dep != rel_path and dep not in local_deps:
+                    local_deps.append(dep)
+            outline = python_outline(content)
+        else:
+            outline = []
+            first = next((ln.strip() for ln in content.splitlines() if ln.strip()), "")
+            doc = first[:200]
+
+        purpose = doc or (f"Defines {', '.join(symbols[:12])}" if symbols else f"{Path(rel_path).suffix or 'text'} file")
+
+        try:
+            self.semantic.store_file_summary(
+                file_path=rel_path, purpose=purpose,
+                responsibilities=[ln.strip() for ln in outline[:20]],
+                exports=symbols, dependencies=local_deps, constraints=[], risks=[],
+            )
+        except Exception as e:
+            log.debug("Semantic indexing failed for %s: %s", rel_path, e)
+
+        if self.graph.is_available:
+            try:
+                self.graph.add_node("File", {"path": rel_path, "name": Path(rel_path).name, "purpose": purpose})
+                for name in symbols:
+                    sym_id = f"{rel_path}::{name}"
+                    self.graph.add_node("Symbol", {"id": sym_id, "name": name, "file": rel_path})
+                    self.graph.add_edge("File", rel_path, "Symbol", sym_id, "CONTAINS")
+                for dep in local_deps:
+                    self.graph.add_node("File", {"path": dep, "name": Path(dep).name})
+                    self.graph.add_edge("File", rel_path, "File", dep, "IMPORTS")
+                    self.graph.add_edge("File", rel_path, "File", dep, "DEPENDS_ON")
+            except Exception as e:
+                log.debug("Graph indexing failed for %s: %s", rel_path, e)
+        return {"symbols": symbols, "imports": local_deps}
 
     # ── ADR Management ────────────────────────────────────────────────
 

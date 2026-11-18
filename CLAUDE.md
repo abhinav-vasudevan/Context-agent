@@ -79,6 +79,15 @@ npm run lint       # eslint .
 
 ## Architecture
 
+### Engines: `loop` (default) vs `pipeline`
+
+`config.AGENT_ENGINE` selects how builds and follow-up requests run:
+
+- **`loop` (v3, default)** — `core/agent/`, modelled on OpenCode (reference copy in `reference/opencode/`, not imported). One model, one conversation: the model acts through text action blocks (`### FILE` / `### EDIT` / `### READ` / `### SEARCH` / `### BRAIN` / `### RUN` / `### DONE`, parsed in `core/agent/actions.py`), then `core/agent/diagnostics.py` runs deterministic checks (syntax, ruff F-rules, pyright broken-code rules, smoke run of the entry point) and feeds problems back for up to `AGENT_MAX_REPAIR_ROUNDS`. **Fit or retrieve** (`core/agent/workspace.py`): if the project + task fit in `AGENT_FIT_FRACTION` of the input budget the model sees every file verbatim (nothing is split); otherwise it gets an AST repo map and pulls files with READ/SEARCH/BRAIN. When the conversation outgrows the window it is rebased from the files on disk. `Orchestrator.generate_plan` → `_generate_plan_loop` (one read-only plan call), `execute_all` → `_execute_loop`, follow-ups → `_run_agent`.
+- **`pipeline` (v2)** — the hierarchical planner → stubs → one LLM call per file → fixer path described below. Kept for comparison (`benchmarks/` variant `pipeline`).
+
+The Project Brain is indexed from the **AST, not an LLM**: `ProjectBrain.index_file_ast` writes File/Symbol nodes and real `IMPORTS`/`DEPENDS_ON` edges to Neo4j and a searchable descriptor to ChromaDB whenever a file is written or ingested. The old LLM `SummarizerAgent` was removed.
+
 ### Layered flow
 
 `frontend/` (React/Vite dashboard) → `backend/server.py` (FastAPI REST + `/ws` WebSocket) → `backend/orchestrator.py` (`Orchestrator` class, the stateful engine) → `core/` (agents, planners, retrieval, verification) → `models/` (dataclass state).
